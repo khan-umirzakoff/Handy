@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Handy",
+  "productName": "Handy Uzbek",
   "version": "0.9.5",
-  "identifier": "com.pais.handy",
+  "identifier": "uz.khan.handy",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",

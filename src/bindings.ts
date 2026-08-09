@@ -1012,6 +1012,11 @@ sha256: string | null } } |
  */
 { HuggingFace: { repo_id: string; revision: string } } | 
 /**
+ * Shipped inside the application bundle and resolved through Tauri's
+ * resource directory. It is never copied, linked, downloaded, or deleted.
+ */
+{ Bundled: { resource_path: string } } |
+/**
  * Already present on disk — a user-provided custom model, or one discovered
  * in a shared cache. Nothing to download.
  */

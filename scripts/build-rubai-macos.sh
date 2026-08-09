@@ -21,6 +21,7 @@ done
 MODEL_PATH="${RUBAI_MODEL_PATH:-}"
 if [[ -z "$MODEL_PATH" ]]; then
   for candidate in \
+    "/Applications/Handy Uzbek.app/Contents/Resources/resources/rubai/ggml-rubaistt-v2-medium-q8_0.bin" \
     "/Applications/Handy.app/Contents/Resources/resources/rubai/ggml-rubaistt-v2-medium-q8_0.bin" \
     "/Applications/Audio-Matnga.app/Contents/Resources/ggml-rubaistt.bin"; do
     if [[ -f "$candidate" ]]; then
@@ -56,4 +57,4 @@ bun install --frozen-lockfile
 HANDY_FORCE_AI_STUB=1 CMAKE_POLICY_VERSION_MINIMUM=3.5 \
   bun run tauri build --bundles app
 
-echo "Built: $ROOT/src-tauri/target/release/bundle/macos/Handy.app"
+echo "Built: $ROOT/src-tauri/target/release/bundle/macos/Handy Uzbek.app"

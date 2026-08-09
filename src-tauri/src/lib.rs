@@ -182,6 +182,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(history_manager.clone());
     app_handle.manage(tray::CurrentTrayIconState::new());
 
+    // Rubai's accuracy-tuned whisper.cpp worker takes noticeably longer to
+    // initialize than Handy's usual models. Warm it in the background at app
+    // startup so the first short dictation does not pay that startup cost.
+    if settings::get_settings(app_handle).selected_model == managers::model::RUBAI_MODEL_ID {
+        transcription_manager.initiate_model_load();
+    }
+
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
     // after permissions are confirmed (on macOS) or after onboarding completes.
@@ -876,7 +883,7 @@ pub fn run(cli_args: CliArgs) {
             // for portable mode (redirects WebView2 cache to portable Data dir)
             let mut win_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
-                    .title("Handy")
+                    .title("Handy Uzbek")
                     .inner_size(680.0, 570.0)
                     .min_inner_size(680.0, 570.0)
                     .resizable(true)

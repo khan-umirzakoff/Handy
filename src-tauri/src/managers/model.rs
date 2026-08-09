@@ -52,6 +52,9 @@ pub enum ModelSource {
     /// HF cache (so other tools reuse it). The file within the repo is
     /// [`ModelInfo::filename`].
     HuggingFace { repo_id: String, revision: String },
+    /// Shipped inside the application bundle and resolved through Tauri's
+    /// resource directory. It is never copied, linked, downloaded, or deleted.
+    Bundled { resource_path: String },
     /// Already present on disk — a user-provided custom model, or one discovered
     /// in a shared cache. Nothing to download.
     Local,
@@ -552,7 +555,9 @@ impl ModelManager {
                 description: "Bundled Uzbek dictation model with accuracy-tuned beam search."
                     .to_string(),
                 filename: RUBAI_MODEL_FILENAME.to_string(),
-                source: ModelSource::Local,
+                source: ModelSource::Bundled {
+                    resource_path: "resources/rubai/ggml-rubaistt-v2-medium-q8_0.bin".to_string(),
+                },
                 size_mb: 785,
                 is_downloaded: false,
                 is_downloading: false,
@@ -1162,10 +1167,6 @@ impl ModelManager {
         // Migrate any bundled models to user directory
         manager.migrate_bundled_models()?;
 
-        // Rubai is large, so expose the app-bundle copy through a self-healing
-        // symlink instead of duplicating another 785 MB in app data.
-        manager.ensure_bundled_rubai_model()?;
-
         // Migrate GigaAM from single-file to directory format
         manager.migrate_gigaam_to_directory()?;
 
@@ -1351,38 +1352,6 @@ impl ModelManager {
         Ok(())
     }
 
-    fn ensure_bundled_rubai_model(&self) -> Result<()> {
-        let bundled_path = self
-            .app_handle
-            .path()
-            .resolve(
-                "resources/rubai/ggml-rubaistt-v2-medium-q8_0.bin",
-                tauri::path::BaseDirectory::Resource,
-            )
-            .map_err(|e| anyhow::anyhow!("Failed to resolve bundled Rubai model: {e}"))?;
-
-        if !bundled_path.exists() {
-            warn!("Bundled Rubai model is missing at {:?}", bundled_path);
-            return Ok(());
-        }
-
-        let user_path = self.models_dir.join(RUBAI_MODEL_FILENAME);
-        if user_path.exists() {
-            return Ok(());
-        }
-        if fs::symlink_metadata(&user_path).is_ok() {
-            fs::remove_file(&user_path)?;
-        }
-
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&bundled_path, &user_path)?;
-        #[cfg(not(unix))]
-        fs::copy(&bundled_path, &user_path)?;
-
-        info!("Exposed bundled Rubai model at {:?}", user_path);
-        Ok(())
-    }
-
     /// Migrate GigaAM from the old single-file format (giga-am-v3.int8.onnx)
     /// to the new directory format (giga-am-v3-int8/model.int8.onnx + vocab.txt).
     /// This was required by the transcribe-rs 0.3.x upgrade.
@@ -1436,6 +1405,16 @@ impl ModelManager {
         let mut vanished_alternates: Vec<String> = Vec::new();
 
         for model in models.values_mut() {
+            if let ModelSource::Bundled { resource_path } = &model.source {
+                model.is_downloaded = self
+                    .app_handle
+                    .path()
+                    .resolve(resource_path, tauri::path::BaseDirectory::Resource)
+                    .is_ok_and(|path| path.is_file());
+                model.is_downloading = false;
+                model.partial_size = 0;
+                continue;
+            }
             if let ModelSource::HuggingFace { repo_id, revision } = &model.source {
                 // A models-dir copy counts too: mirror-fallback downloads land
                 // there, and it makes manual drop-ins of catalog files work.
@@ -2235,6 +2214,11 @@ impl ModelManager {
             ModelSource::Local => {
                 return Err(anyhow::anyhow!("No download source for model"));
             }
+            ModelSource::Bundled { .. } => {
+                return Err(anyhow::anyhow!(
+                    "Bundled model is already part of the application"
+                ));
+            }
         };
         let model_path = self.models_dir.join(&model_info.filename);
         let partial_path = self
@@ -2427,6 +2411,12 @@ impl ModelManager {
 
         debug!("ModelManager: Found model info: {:?}", model_info);
 
+        if matches!(model_info.source, ModelSource::Bundled { .. }) {
+            return Err(anyhow::anyhow!(
+                "Bundled models cannot be deleted from the application"
+            ));
+        }
+
         if let ModelSource::HuggingFace { repo_id, revision } = &model_info.source {
             let is_alternate_quant =
                 Self::is_catalog_alternate_quant(repo_id, &model_info.filename);
@@ -2549,6 +2539,21 @@ impl ModelManager {
         if model_info.is_downloading {
             return Err(anyhow::anyhow!(
                 "Model is currently downloading: {}",
+                model_id
+            ));
+        }
+
+        if let ModelSource::Bundled { resource_path } = &model_info.source {
+            let path = self
+                .app_handle
+                .path()
+                .resolve(resource_path, tauri::path::BaseDirectory::Resource)
+                .map_err(|e| anyhow::anyhow!("Failed to resolve bundled model: {e}"))?;
+            if path.is_file() {
+                return Ok(path);
+            }
+            return Err(anyhow::anyhow!(
+                "Bundled model file not found: {}",
                 model_id
             ));
         }
