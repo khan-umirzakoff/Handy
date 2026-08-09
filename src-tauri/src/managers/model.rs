@@ -57,6 +57,9 @@ pub enum ModelSource {
     Local,
 }
 
+pub const RUBAI_MODEL_ID: &str = "rubai-stt-v2-medium-q8_0";
+pub const RUBAI_MODEL_FILENAME: &str = "ggml-rubaistt-v2-medium-q8_0.bin";
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct ModelInfo {
     pub id: String,
@@ -540,6 +543,33 @@ impl ModelManager {
         .into_iter()
         .map(String::from)
         .collect();
+
+        available_models.insert(
+            RUBAI_MODEL_ID.to_string(),
+            ModelInfo {
+                id: RUBAI_MODEL_ID.to_string(),
+                name: "RubaiSTT v2 Medium (Uzbek)".to_string(),
+                description: "Bundled Uzbek dictation model with accuracy-tuned beam search."
+                    .to_string(),
+                filename: RUBAI_MODEL_FILENAME.to_string(),
+                source: ModelSource::Local,
+                size_mb: 785,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.90,
+                speed_score: 0.55,
+                supports_translation: false,
+                is_recommended: true,
+                supported_languages: vec!["uz".to_string()],
+                supports_language_selection: false,
+                is_custom: false,
+                supports_streaming: false,
+                supports_language_detection: false,
+            },
+        );
 
         available_models.insert(
             "small".to_string(),
@@ -1132,6 +1162,10 @@ impl ModelManager {
         // Migrate any bundled models to user directory
         manager.migrate_bundled_models()?;
 
+        // Rubai is large, so expose the app-bundle copy through a self-healing
+        // symlink instead of duplicating another 785 MB in app data.
+        manager.ensure_bundled_rubai_model()?;
+
         // Migrate GigaAM from single-file to directory format
         manager.migrate_gigaam_to_directory()?;
 
@@ -1314,6 +1348,38 @@ impl ModelManager {
             }
         }
 
+        Ok(())
+    }
+
+    fn ensure_bundled_rubai_model(&self) -> Result<()> {
+        let bundled_path = self
+            .app_handle
+            .path()
+            .resolve(
+                "resources/rubai/ggml-rubaistt-v2-medium-q8_0.bin",
+                tauri::path::BaseDirectory::Resource,
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to resolve bundled Rubai model: {e}"))?;
+
+        if !bundled_path.exists() {
+            warn!("Bundled Rubai model is missing at {:?}", bundled_path);
+            return Ok(());
+        }
+
+        let user_path = self.models_dir.join(RUBAI_MODEL_FILENAME);
+        if user_path.exists() {
+            return Ok(());
+        }
+        if fs::symlink_metadata(&user_path).is_ok() {
+            fs::remove_file(&user_path)?;
+        }
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&bundled_path, &user_path)?;
+        #[cfg(not(unix))]
+        fs::copy(&bundled_path, &user_path)?;
+
+        info!("Exposed bundled Rubai model at {:?}", user_path);
         Ok(())
     }
 

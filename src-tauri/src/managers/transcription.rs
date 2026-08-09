@@ -1,6 +1,7 @@
 use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
 use crate::managers::audio::AudioRecordingManager;
-use crate::managers::model::{EngineType, ModelManager};
+use crate::managers::model::{EngineType, ModelManager, RUBAI_MODEL_ID};
+use crate::managers::rubai::RubaiEngine;
 use crate::settings::{
     get_settings, AppSettings, ModelUnloadTimeout, OrtAcceleratorSetting,
     TranscribeAcceleratorSetting,
@@ -171,6 +172,7 @@ enum LoadedEngine {
     /// transcribe-cpp. Holds the live `Session`, which keeps its `Model` alive
     /// internally, so repeated dictation reuses the session without reloading.
     TranscribeCpp(Session),
+    Rubai(RubaiEngine),
     Parakeet(ParakeetModel),
     Moonshine(MoonshineModel),
     MoonshineStreaming(StreamingModel),
@@ -535,59 +537,79 @@ impl TranscriptionManager {
             );
         };
 
-        let loaded_engine = match model_info.engine_type {
-            EngineType::TranscribeCpp => {
-                // The whisper backend is chosen at load time (transcribe-cpp has
-                // no runtime global). With an explicit `device_index` (the
-                // --device-index flag) hard-select that registered device;
-                // otherwise re-read the persisted accelerator preference (so an
-                // accelerator change marked for reload takes effect here).
-                let (backend, gpu_device) = match device_index {
-                    Some(index) => resolve_device_index(index).inspect_err(|e| {
-                        emit_loading_failed(&e.to_string());
-                    })?,
-                    None => {
-                        let settings = get_settings(&self.app_handle);
-                        let accelerator = settings.transcribe_accelerator;
-                        (
-                            select_transcribe_backend(accelerator),
-                            resolve_gpu_device(accelerator, settings.transcribe_gpu_device),
-                        )
-                    }
-                };
-                let model_options = ModelOptions {
-                    backend,
-                    gpu_device,
-                };
-                let model = Model::load_with(&model_path, &model_options).map_err(|e| {
-                    let error_msg = format!("Failed to load whisper model {}: {}", model_id, e);
-                    emit_loading_failed(&error_msg);
-                    anyhow::anyhow!(error_msg)
-                })?;
-                // The bound backend may differ from the request (e.g. CPU
-                // fallback under Auto); log what actually loaded.
-                let bound_backend = model.backend();
-                let session = model.session().map_err(|e| {
-                    let error_msg = format!(
-                        "Failed to create session for whisper model {}: {}",
-                        model_id, e
+        let loaded_engine = if model_id == RUBAI_MODEL_ID {
+            let helper_path = self
+                .app_handle
+                .path()
+                .resolve(
+                    "resources/rubai/rubai-helper",
+                    tauri::path::BaseDirectory::Resource,
+                )
+                .map_err(|e| anyhow::anyhow!("Failed to resolve Rubai helper: {e}"))?;
+            let engine = RubaiEngine::new(&helper_path, &model_path).map_err(|e| {
+                let error_msg = format!("Failed to load Rubai model {}: {}", model_id, e);
+                emit_loading_failed(&error_msg);
+                anyhow::anyhow!(error_msg)
+            })?;
+            info!(
+                "Loaded Rubai model '{}' with Audio-Matnga beam-search settings",
+                model_id
+            );
+            LoadedEngine::Rubai(engine)
+        } else {
+            match model_info.engine_type {
+                EngineType::TranscribeCpp => {
+                    // The whisper backend is chosen at load time (transcribe-cpp has
+                    // no runtime global). With an explicit `device_index` (the
+                    // --device-index flag) hard-select that registered device;
+                    // otherwise re-read the persisted accelerator preference (so an
+                    // accelerator change marked for reload takes effect here).
+                    let (backend, gpu_device) = match device_index {
+                        Some(index) => resolve_device_index(index).inspect_err(|e| {
+                            emit_loading_failed(&e.to_string());
+                        })?,
+                        None => {
+                            let settings = get_settings(&self.app_handle);
+                            let accelerator = settings.transcribe_accelerator;
+                            (
+                                select_transcribe_backend(accelerator),
+                                resolve_gpu_device(accelerator, settings.transcribe_gpu_device),
+                            )
+                        }
+                    };
+                    let model_options = ModelOptions {
+                        backend,
+                        gpu_device,
+                    };
+                    let model = Model::load_with(&model_path, &model_options).map_err(|e| {
+                        let error_msg = format!("Failed to load whisper model {}: {}", model_id, e);
+                        emit_loading_failed(&error_msg);
+                        anyhow::anyhow!(error_msg)
+                    })?;
+                    // The bound backend may differ from the request (e.g. CPU
+                    // fallback under Auto); log what actually loaded.
+                    let bound_backend = model.backend();
+                    let session = model.session().map_err(|e| {
+                        let error_msg = format!(
+                            "Failed to create session for whisper model {}: {}",
+                            model_id, e
+                        );
+                        emit_loading_failed(&error_msg);
+                        anyhow::anyhow!(error_msg)
+                    })?;
+                    // Reconcile the registry's advertised capabilities with the
+                    // loaded model's real ones (GGUF metadata) so badges/gating
+                    // reflect runtime truth, not the pre-download probe. The
+                    // load-completed event below triggers the frontend refresh.
+                    let caps = session.model().capabilities();
+                    self.model_manager.set_runtime_capabilities(
+                        model_id,
+                        caps.supports_streaming,
+                        caps.supports_translate,
+                        caps.supports_language_detect,
+                        caps.languages.clone(),
                     );
-                    emit_loading_failed(&error_msg);
-                    anyhow::anyhow!(error_msg)
-                })?;
-                // Reconcile the registry's advertised capabilities with the
-                // loaded model's real ones (GGUF metadata) so badges/gating
-                // reflect runtime truth, not the pre-download probe. The
-                // load-completed event below triggers the frontend refresh.
-                let caps = session.model().capabilities();
-                self.model_manager.set_runtime_capabilities(
-                    model_id,
-                    caps.supports_streaming,
-                    caps.supports_translate,
-                    caps.supports_language_detect,
-                    caps.languages.clone(),
-                );
-                info!(
+                    info!(
                     "Loaded whisper model '{}' (requested {:?}, gpu_device {}, bound backend '{}', \
                      supports_streaming={}, supports_translate={}, supports_language_detect={})",
                     model_id,
@@ -598,76 +620,84 @@ impl TranscriptionManager {
                     caps.supports_translate,
                     caps.supports_language_detect
                 );
-                LoadedEngine::TranscribeCpp(session)
-            }
-            EngineType::Parakeet => {
-                let engine =
-                    ParakeetModel::load(&model_path, &Quantization::Int8).map_err(|e| {
-                        let error_msg =
-                            format!("Failed to load parakeet model {}: {}", model_id, e);
-                        emit_loading_failed(&error_msg);
-                        anyhow::anyhow!(error_msg)
-                    })?;
-                LoadedEngine::Parakeet(engine)
-            }
-            EngineType::Moonshine => {
-                let engine = MoonshineModel::load(
-                    &model_path,
-                    MoonshineVariant::Base,
-                    &Quantization::default(),
-                )
-                .map_err(|e| {
-                    let error_msg = format!("Failed to load moonshine model {}: {}", model_id, e);
-                    emit_loading_failed(&error_msg);
-                    anyhow::anyhow!(error_msg)
-                })?;
-                LoadedEngine::Moonshine(engine)
-            }
-            EngineType::MoonshineStreaming => {
-                let engine = StreamingModel::load(&model_path, 0, &Quantization::default())
+                    LoadedEngine::TranscribeCpp(session)
+                }
+                EngineType::Parakeet => {
+                    let engine =
+                        ParakeetModel::load(&model_path, &Quantization::Int8).map_err(|e| {
+                            let error_msg =
+                                format!("Failed to load parakeet model {}: {}", model_id, e);
+                            emit_loading_failed(&error_msg);
+                            anyhow::anyhow!(error_msg)
+                        })?;
+                    LoadedEngine::Parakeet(engine)
+                }
+                EngineType::Moonshine => {
+                    let engine = MoonshineModel::load(
+                        &model_path,
+                        MoonshineVariant::Base,
+                        &Quantization::default(),
+                    )
                     .map_err(|e| {
-                        let error_msg = format!(
-                            "Failed to load moonshine streaming model {}: {}",
-                            model_id, e
-                        );
-                        emit_loading_failed(&error_msg);
-                        anyhow::anyhow!(error_msg)
-                    })?;
-                LoadedEngine::MoonshineStreaming(engine)
-            }
-            EngineType::SenseVoice => {
-                let engine =
-                    SenseVoiceModel::load(&model_path, &Quantization::Int8).map_err(|e| {
                         let error_msg =
-                            format!("Failed to load SenseVoice model {}: {}", model_id, e);
+                            format!("Failed to load moonshine model {}: {}", model_id, e);
                         emit_loading_failed(&error_msg);
                         anyhow::anyhow!(error_msg)
                     })?;
-                LoadedEngine::SenseVoice(engine)
-            }
-            EngineType::GigaAM => {
-                let engine = GigaAMModel::load(&model_path, &Quantization::Int8).map_err(|e| {
-                    let error_msg = format!("Failed to load gigaam model {}: {}", model_id, e);
-                    emit_loading_failed(&error_msg);
-                    anyhow::anyhow!(error_msg)
-                })?;
-                LoadedEngine::GigaAM(engine)
-            }
-            EngineType::Canary => {
-                let engine = CanaryModel::load(&model_path, &Quantization::Int8).map_err(|e| {
-                    let error_msg = format!("Failed to load canary model {}: {}", model_id, e);
-                    emit_loading_failed(&error_msg);
-                    anyhow::anyhow!(error_msg)
-                })?;
-                LoadedEngine::Canary(engine)
-            }
-            EngineType::Cohere => {
-                let engine = CohereModel::load(&model_path, &Quantization::Int8).map_err(|e| {
-                    let error_msg = format!("Failed to load cohere model {}: {}", model_id, e);
-                    emit_loading_failed(&error_msg);
-                    anyhow::anyhow!(error_msg)
-                })?;
-                LoadedEngine::Cohere(engine)
+                    LoadedEngine::Moonshine(engine)
+                }
+                EngineType::MoonshineStreaming => {
+                    let engine = StreamingModel::load(&model_path, 0, &Quantization::default())
+                        .map_err(|e| {
+                            let error_msg = format!(
+                                "Failed to load moonshine streaming model {}: {}",
+                                model_id, e
+                            );
+                            emit_loading_failed(&error_msg);
+                            anyhow::anyhow!(error_msg)
+                        })?;
+                    LoadedEngine::MoonshineStreaming(engine)
+                }
+                EngineType::SenseVoice => {
+                    let engine =
+                        SenseVoiceModel::load(&model_path, &Quantization::Int8).map_err(|e| {
+                            let error_msg =
+                                format!("Failed to load SenseVoice model {}: {}", model_id, e);
+                            emit_loading_failed(&error_msg);
+                            anyhow::anyhow!(error_msg)
+                        })?;
+                    LoadedEngine::SenseVoice(engine)
+                }
+                EngineType::GigaAM => {
+                    let engine =
+                        GigaAMModel::load(&model_path, &Quantization::Int8).map_err(|e| {
+                            let error_msg =
+                                format!("Failed to load gigaam model {}: {}", model_id, e);
+                            emit_loading_failed(&error_msg);
+                            anyhow::anyhow!(error_msg)
+                        })?;
+                    LoadedEngine::GigaAM(engine)
+                }
+                EngineType::Canary => {
+                    let engine =
+                        CanaryModel::load(&model_path, &Quantization::Int8).map_err(|e| {
+                            let error_msg =
+                                format!("Failed to load canary model {}: {}", model_id, e);
+                            emit_loading_failed(&error_msg);
+                            anyhow::anyhow!(error_msg)
+                        })?;
+                    LoadedEngine::Canary(engine)
+                }
+                EngineType::Cohere => {
+                    let engine =
+                        CohereModel::load(&model_path, &Quantization::Int8).map_err(|e| {
+                            let error_msg =
+                                format!("Failed to load cohere model {}: {}", model_id, e);
+                            emit_loading_failed(&error_msg);
+                            anyhow::anyhow!(error_msg)
+                        })?;
+                    LoadedEngine::Cohere(engine)
+                }
             }
         };
 
@@ -749,6 +779,7 @@ impl TranscriptionManager {
             Some(LoadedEngine::TranscribeCpp(session)) => {
                 Some(session.model().backend().to_string())
             }
+            Some(LoadedEngine::Rubai(_)) => Some("whisper.cpp-metal-beam".to_string()),
             Some(_) => Some("onnx".to_string()),
             None => None,
         }
@@ -1175,7 +1206,6 @@ impl TranscriptionManager {
         // run extension and the fuzzy-correction skip are gated on
         // `model_is_whisper` instead, since non-whisper archs can advertise
         // the feature while rejecting the whisper-kind extension.
-        let mut model_takes_initial_prompt = false;
         // Whether the loaded model is actually whisper-family (arch string).
         // Non-whisper archs (e.g. Voxtral Small) can advertise
         // Feature::InitialPrompt yet reject the whisper-kind run extension
@@ -1214,7 +1244,7 @@ impl TranscriptionManager {
             if let LoadedEngine::TranscribeCpp(session) = &engine {
                 let model = session.model();
                 let caps = model.capabilities();
-                model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
+                let model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
                 model_is_whisper = model.arch() == "whisper";
                 model_supports_translate = caps.supports_translate;
                 model_languages = caps.languages;
@@ -1230,6 +1260,9 @@ impl TranscriptionManager {
 
             let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
                 match &mut engine {
+                    LoadedEngine::Rubai(rubai_engine) => rubai_engine
+                        .transcribe(&audio)
+                        .map_err(|e| anyhow::anyhow!("Rubai transcription failed: {}", e)),
                     LoadedEngine::TranscribeCpp(session) => {
                         // Custom words become the initial prompt ONLY for models
                         // that accept one (whisper family). Attaching the

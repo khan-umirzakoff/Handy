@@ -7,10 +7,13 @@ package-lock.json
 dist
 target
 *.bundle.*
+.build/
+.tools/
 
 # Tauri
 src-tauri/target
 src-tauri/gen
+src-tauri/resources/rubai/
 
 # Generated files
 src/bindings.ts

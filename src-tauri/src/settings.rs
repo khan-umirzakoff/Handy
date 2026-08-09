@@ -506,7 +506,7 @@ fn default_autostart_enabled() -> bool {
 }
 
 fn default_update_checks_enabled() -> bool {
-    true
+    false
 }
 
 fn default_show_whats_new_on_update() -> bool {
@@ -988,6 +988,26 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
     };
 
     if ensure_post_process_defaults(&mut settings) {
+        store.set("settings", serde_json::to_value(&settings).unwrap());
+    }
+
+    // This local Rubai build must never install an upstream Handy update over
+    // its custom inference backend. Also migrate the previously imported Rubai
+    // filename to the bundled model's stable id without touching other prefs.
+    let mut rubai_build_updated = false;
+    if settings.update_checks_enabled {
+        settings.update_checks_enabled = false;
+        rubai_build_updated = true;
+    }
+    if matches!(
+        settings.selected_model.as_str(),
+        "ggml-rubaistt-v2-medium-q8_0" | "rubaistt-v2-medium-q8_0"
+    ) {
+        settings.selected_model = crate::managers::model::RUBAI_MODEL_ID.to_string();
+        settings.selected_language = "uz".to_string();
+        rubai_build_updated = true;
+    }
+    if rubai_build_updated {
         store.set("settings", serde_json::to_value(&settings).unwrap());
     }
 

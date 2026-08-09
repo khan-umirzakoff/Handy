@@ -29,6 +29,9 @@ dist-ssr
 .claude/
 
 /target/
+.build/
+.tools/
+src-tauri/resources/rubai/
 recording_*
 .crush/
 
