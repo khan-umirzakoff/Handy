@@ -31,6 +31,7 @@ dist-ssr
 /target/
 .build/
 .tools/
+/work/
 src-tauri/resources/rubai/
 recording_*
 .crush/

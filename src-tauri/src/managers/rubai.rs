@@ -18,11 +18,24 @@ pub struct RubaiEngine {
 
 impl RubaiEngine {
     pub fn new(helper_path: &Path, model_path: &Path) -> Result<Self> {
-        let mut child = Command::new(helper_path)
+        let mut command = Command::new(helper_path);
+        command
             .arg(model_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+
+        // Hybrid Linux laptops often enumerate an integrated Vulkan GPU before
+        // the faster discrete GPU. Keep this opt-in and Rubai-only so selecting
+        // a device for the helper does not alter Handy's other model backends.
+        #[cfg(target_os = "linux")]
+        if let Ok(devices) = std::env::var("HANDY_RUBAI_VK_VISIBLE_DEVICES") {
+            if !devices.trim().is_empty() {
+                command.env("GGML_VK_VISIBLE_DEVICES", devices);
+            }
+        }
+
+        let mut child = command
             .spawn()
             .with_context(|| format!("Failed to start Rubai helper at {:?}", helper_path))?;
 

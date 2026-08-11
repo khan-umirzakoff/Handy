@@ -779,7 +779,16 @@ impl TranscriptionManager {
             Some(LoadedEngine::TranscribeCpp(session)) => {
                 Some(session.model().backend().to_string())
             }
-            Some(LoadedEngine::Rubai(_)) => Some("whisper.cpp-metal-beam".to_string()),
+            Some(LoadedEngine::Rubai(_)) => Some(
+                if cfg!(target_os = "macos") {
+                    "whisper.cpp-metal-beam"
+                } else if cfg!(target_os = "linux") {
+                    "whisper.cpp-vulkan-beam"
+                } else {
+                    "whisper.cpp-beam"
+                }
+                .to_string(),
+            ),
             Some(_) => Some("onnx".to_string()),
             None => None,
         }

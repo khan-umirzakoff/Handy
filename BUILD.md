@@ -118,6 +118,30 @@ This compiles a release binary and generates platform-specific bundles (deb, rpm
 
 ## Linux Install (from source)
 
+### Rubai fork build
+
+The Rubai fork ships a pinned whisper.cpp helper and the verified RubaiSTT v2
+Medium Q8_0 model in its Debian package. On a machine that already has the
+custom model in Handy's model directory, build it with:
+
+```bash
+RUBAI_BUILD_TMPDIR=/path/with/free-space ./scripts/build-rubai-linux.sh
+```
+
+Set `RUBAI_MODEL_PATH` when the model is stored elsewhere. The script verifies
+the known model checksum before packaging; set `RUBAI_EXPECTED_SHA256` only for
+an intentionally replaced and independently verified conversion.
+
+The Linux-specific Tauri configuration keeps the existing `handy` package name
+and `com.pais.handy` data identity. Installing the resulting package upgrades
+the application without moving or resetting existing Linux settings, history,
+recordings, or user-managed models.
+
+On a hybrid-GPU Linux machine, set `HANDY_RUBAI_VK_VISIBLE_DEVICES` to the
+Vulkan physical-device index that the helper should expose (for example `1`
+when an NVIDIA dGPU follows an AMD iGPU). The variable affects only the Rubai
+worker and is forwarded as whisper.cpp's `GGML_VK_VISIBLE_DEVICES`.
+
 The raw binary (`src-tauri/target/release/handy`) cannot run standalone — it needs Tauri resource files (tray icons, sounds, VAD model) to be co-located at the expected path.
 
 **Install from the deb bundle** (works on any Linux distro):
