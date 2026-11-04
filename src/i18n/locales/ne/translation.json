@@ -982,7 +982,10 @@
     "finishAndPaste": "Finish and paste",
     "pasteRecoveryHint": "Select a text field before dictating",
     "pasteRecoveryCopy": "Copy dictation",
-    "pasteRecoveryCopied": "Copied"
+    "pasteRecoveryCopied": "Copied",
+    "dictate": "Dictate",
+    "cancel": "Cancel",
+    "pressToFinish": "Press <key>{{hotkey}}</key> to finish and paste"
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} ले 1 सर्टकट रोकिरहेको हुन सक्छ",

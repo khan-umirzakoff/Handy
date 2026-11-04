@@ -3,6 +3,7 @@ use crate::notices::Notice;
 use crate::settings;
 use crate::settings::{OverlayPosition, OverlayStyle};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
@@ -33,65 +34,29 @@ tauri_panel! {
         }
     })
 
-    panel!(FlowBarTooltipPanel {
-        config: {
-            can_become_key_window: false,
-            is_floating_panel: true
-        }
-    })
 }
 
-// The persistent Flow Bar keeps its native window tight around the painted
-// surface. That is important because Tauri cannot do Electron-style per-pixel
-// hit testing: a large transparent window would swallow clicks. Dimensions are
-// therefore state- and dock-aware and mirror the independently implemented CSS.
-const BOTTOM_REST_WIDTH: f64 = 76.0;
-const BOTTOM_PTT_WIDTH: f64 = 103.0;
-const BOTTOM_ACTIVE_WIDTH: f64 = 132.0;
-const BOTTOM_HEIGHT: f64 = 54.0;
-const SIDE_REST_WIDTH: f64 = 54.0;
-const SIDE_REST_HEIGHT: f64 = 76.0;
-const SIDE_PTT_HEIGHT: f64 = 103.0;
-const SIDE_ACTIVE_WIDTH: f64 = 54.0;
-const SIDE_ACTIVE_HEIGHT: f64 = 132.0;
-const SIDE_WORK_WIDTH: f64 = 54.0;
-const SIDE_WORK_HEIGHT: f64 = 132.0;
-const RECOVERY_WIDTH: f64 = 400.0;
-const RECOVERY_HEIGHT: f64 = 190.0;
-const NOTICE_WIDTH: f64 = 360.0;
-const NOTICE_HEIGHT: f64 = 124.0;
-const TOOLTIP_WIDTH: f64 = 176.0;
-const TOOLTIP_HEIGHT: f64 = 34.0;
-const BUBBLE_TOOLTIP_GAP: f64 = 4.0;
-const ACTION_TOOLTIP_GAP: f64 = 10.0;
-const FLOW_BAR_PADDING: f64 = 6.0;
-const FLOW_BAR_THICKNESS: f64 = 30.0;
+// Like Wispr Flow, the bar lives in one fixed, transparent stage per edge and
+// the renderer animates freely inside it (no native resize per state, which is
+// what made the old bar stutter). Only the rectangles the renderer reports
+// catch the mouse; everywhere else clicks fall through (Flow:
+// `ReportAlphaCatchRects`). Stage sizes are Flow's status window:
+// bottom 512 x 614, sides 490 x min(1144, work-area height)
+// (.re/flow-desktop/pretty/main/index.js:403964-404010).
+const STAGE_BOTTOM_WIDTH: f64 = 512.0;
+const STAGE_BOTTOM_HEIGHT: f64 = 614.0;
+const STAGE_SIDE_WIDTH: f64 = 490.0;
+const STAGE_SIDE_MAX_HEIGHT: f64 = 1144.0;
 
-// Actual is 394x118, just a little extra
-const OVERLAY_STREAM_WIDTH: f64 = 400.0;
-const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
-
-/// Overlay window size (logical points) for a given UI state and dock edge.
-fn overlay_dimensions(state: &str, position: OverlayPosition) -> (f64, f64) {
-    if state == "paste-recovery" {
-        (RECOVERY_WIDTH, RECOVERY_HEIGHT)
-    } else if state == "notice" {
-        (NOTICE_WIDTH, NOTICE_HEIGHT)
-    } else if state == "streaming" {
-        (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
-    } else if matches!(position, OverlayPosition::Bottom) {
-        let width = match state {
-            "recording-ptt" => BOTTOM_PTT_WIDTH,
-            "recording-toggle" | "transcribing" | "processing" | "error" => BOTTOM_ACTIVE_WIDTH,
-            _ => BOTTOM_REST_WIDTH,
-        };
-        (width, BOTTOM_HEIGHT)
-    } else {
-        match state {
-            "recording-ptt" => (SIDE_ACTIVE_WIDTH, SIDE_PTT_HEIGHT),
-            "recording-toggle" => (SIDE_ACTIVE_WIDTH, SIDE_ACTIVE_HEIGHT),
-            "transcribing" | "processing" | "error" => (SIDE_WORK_WIDTH, SIDE_WORK_HEIGHT),
-            _ => (SIDE_REST_WIDTH, SIDE_REST_HEIGHT),
+/// The stage size for `position` on the monitor under the cursor.
+fn stage_size(app_handle: &AppHandle, position: OverlayPosition) -> (f64, f64) {
+    match position {
+        OverlayPosition::Bottom => (STAGE_BOTTOM_WIDTH, STAGE_BOTTOM_HEIGHT),
+        OverlayPosition::Left | OverlayPosition::Right => {
+            let work_height = get_monitor_with_cursor(app_handle)
+                .map(|m| m.work_area().size.height as f64 / m.scale_factor())
+                .unwrap_or(STAGE_SIDE_MAX_HEIGHT);
+            (STAGE_SIDE_WIDTH, work_height.min(STAGE_SIDE_MAX_HEIGHT))
         }
     }
 }
@@ -104,7 +69,6 @@ const EMIT_THROTTLE_MS: u64 = 33; // ~30 FPS
 // Geometry updates can happen independently of state events (settings change,
 // monitor move), so the native side retains the last requested state.
 static CURRENT_OVERLAY_STATE: AtomicU64 = AtomicU64::new(0);
-const FLOW_BAR_MORPH_COLLAPSE_DELAY_MS: u64 = 110;
 
 #[cfg(target_os = "macos")]
 static FLOW_BAR_HIT_TEST_STARTED: AtomicBool = AtomicBool::new(false);
@@ -117,85 +81,31 @@ static FLOW_BAR_ACCEPTS_MOUSE: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "macos")]
 const FLOW_BAR_HIT_TEST_INTERVAL_MS: u64 = 50;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct FlowBarHitRect {
+/// A rectangle (stage coordinates, logical points) that catches the mouse.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, specta::Type)]
+pub struct CatchRect {
     x: f64,
     y: f64,
     width: f64,
     height: f64,
 }
 
-impl FlowBarHitRect {
+impl CatchRect {
     fn contains(self, x: f64, y: f64) -> bool {
         x >= self.x && y >= self.y && x < self.x + self.width && y < self.y + self.height
     }
 }
 
-/// The independently implemented counterpart of Flow's native catch rectangle.
-///
-/// The renderer owns the visible pill, while this native rectangle prevents the
-/// transparent part of the tight NSPanel from swallowing clicks meant for the
-/// app underneath. Resting uses the exact painted hot area. Once the cursor has
-/// entered it, the expanded ready pill's painted hot area becomes the hysteresis
-/// region. The recovered 12 px pseudo-element extends beyond our tight Tauri
-/// panel, so the native approximation is clamped to the ready hot area instead
-/// of latching the whole transparent panel.
-fn flowbar_hit_rect(
-    state: &str,
-    dock: OverlayPosition,
-    panel_width: f64,
-    panel_height: f64,
-    already_accepting_mouse: bool,
-) -> FlowBarHitRect {
-    if state == "paste-recovery" || state == "notice" {
-        return FlowBarHitRect {
-            x: 0.0,
-            y: 0.0,
-            width: panel_width,
-            height: panel_height,
-        };
-    }
+/// What the renderer last reported as interactive: the hot area around the
+/// pill, an open card, or the whole stage while dragging.
+static CATCH_RECTS: Mutex<Vec<CatchRect>> = Mutex::new(Vec::new());
 
-    let (pill_width, pill_height, inline_padding): (f64, f64, f64) = match (state, dock) {
-        ("recording-ptt", OverlayPosition::Bottom) => (73.0, 30.0, 10.0),
-        ("recording-toggle" | "streaming", OverlayPosition::Bottom) => (102.5, 30.0, 10.0),
-        ("transcribing" | "processing", OverlayPosition::Bottom) => (98.0, 30.0, 10.0),
-        ("error", OverlayPosition::Bottom) => (91.0, 30.0, 10.0),
-        ("resting", OverlayPosition::Bottom) if already_accepting_mouse => (50.0, 30.0, 10.0),
-        ("resting", OverlayPosition::Bottom) => (40.0, 8.0, 10.0),
-        ("recording-ptt", OverlayPosition::Left | OverlayPosition::Right) => (30.0, 73.0, 6.0),
-        ("recording-toggle" | "streaming", OverlayPosition::Left | OverlayPosition::Right) => {
-            (30.0, 102.5, 6.0)
-        }
-        ("transcribing" | "processing", OverlayPosition::Left | OverlayPosition::Right) => {
-            (30.0, 98.0, 6.0)
-        }
-        ("error", OverlayPosition::Left | OverlayPosition::Right) => (30.0, 91.0, 6.0),
-        ("resting", OverlayPosition::Left | OverlayPosition::Right) if already_accepting_mouse => {
-            (30.0, 50.0, 6.0)
-        }
-        ("resting", OverlayPosition::Left | OverlayPosition::Right) => (8.0, 40.0, 6.0),
-        (_, OverlayPosition::Bottom) => (40.0, 8.0, 10.0),
-        (_, OverlayPosition::Left | OverlayPosition::Right) => (8.0, 40.0, 6.0),
-    };
-
-    let width = (pill_width + 2.0 * inline_padding).min(panel_width);
-    let height = (pill_height + 2.0 * FLOW_BAR_PADDING).min(panel_height);
-    let x = match dock {
-        OverlayPosition::Bottom => (panel_width - width) / 2.0,
-        OverlayPosition::Left => 0.0,
-        OverlayPosition::Right => panel_width - width,
-    };
-    let y = match dock {
-        OverlayPosition::Bottom => panel_height - height,
-        OverlayPosition::Left | OverlayPosition::Right => (panel_height - height) / 2.0,
-    };
-
-    FlowBarHitRect {
-        x,
-        y,
-        width,
-        height,
+/// The renderer reports its interactive rectangles whenever they change.
+#[tauri::command]
+#[specta::specta]
+pub fn report_bar_catch_rects(rects: Vec<CatchRect>) {
+    if let Ok(mut current) = CATCH_RECTS.lock() {
+        *current = rects;
     }
 }
 
@@ -245,26 +155,21 @@ fn start_flowbar_hit_test(app_handle: &AppHandle) {
             let local_x = cursor_x as f64 - position.x;
             let local_y = cursor_y as f64 - position.y;
             let was_accepting = FLOW_BAR_ACCEPTS_MOUSE.load(Ordering::Relaxed);
-            let rect = flowbar_hit_rect(
-                current_overlay_state(),
-                settings::get_settings(&app).overlay_position,
-                size.width,
-                size.height,
-                was_accepting,
-            );
-            let should_accept = rect.contains(local_x, local_y);
+            let inside_stage =
+                local_x >= 0.0 && local_y >= 0.0 && local_x < size.width && local_y < size.height;
+            let should_accept = inside_stage
+                && CATCH_RECTS
+                    .lock()
+                    .map(|rects| rects.iter().any(|r| r.contains(local_x, local_y)))
+                    .unwrap_or(false);
 
             if should_accept != was_accepting {
                 FLOW_BAR_ACCEPTS_MOUSE.store(should_accept, Ordering::Relaxed);
                 log::debug!(
-                    "Flow Bar native hit-test: accepts_mouse={} local=({:.1}, {:.1}) rect=({:.1}, {:.1}, {:.1}, {:.1})",
+                    "Bar hit-test: accepts_mouse={} local=({:.1}, {:.1})",
                     should_accept,
                     local_x,
-                    local_y,
-                    rect.x,
-                    rect.y,
-                    rect.width,
-                    rect.height
+                    local_y
                 );
                 if let Err(error) = window.set_ignore_cursor_events(!should_accept) {
                     log::debug!("Failed to update Flow Bar mouse hit-test: {error}");
@@ -632,7 +537,7 @@ fn place_windows_overlay(
 #[cfg(not(target_os = "macos"))]
 pub fn create_recording_overlay(app_handle: &AppHandle) {
     let initial_position = settings::get_settings(app_handle).overlay_position;
-    let (initial_width, initial_height) = overlay_dimensions("resting", initial_position);
+    let (initial_width, initial_height) = stage_size(app_handle, initial_position);
     // On Linux (Wayland), monitor detection often fails, but we don't need exact coordinates
     // for Layer Shell as we use anchors. On other platforms, we require a monitor.
     #[cfg(not(target_os = "linux"))]
@@ -696,42 +601,10 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     }
 }
 
-/// Creates a separate click-through tooltip surface. Keeping it out of the
-/// recording panel lets labels extend beyond the tight hit-tested Flow Bar
-/// without swallowing clicks intended for the app underneath.
-#[cfg(not(target_os = "macos"))]
-pub fn create_flowbar_tooltip(app_handle: &AppHandle) {
-    match WebviewWindowBuilder::new(
-        app_handle,
-        "flowbar_tooltip",
-        tauri::WebviewUrl::App("src/overlay/tooltip.html".into()),
-    )
-    .title("Flow Bar Tooltip")
-    .inner_size(TOOLTIP_WIDTH, TOOLTIP_HEIGHT)
-    .resizable(false)
-    .shadow(false)
-    .decorations(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .transparent(true)
-    .focusable(false)
-    .visible(false)
-    .build()
-    {
-        Ok(window) => {
-            if let Err(error) = window.set_ignore_cursor_events(true) {
-                debug!("Failed to make Flow Bar tooltip click-through: {error}");
-            }
-        }
-        Err(error) => debug!("Failed to create Flow Bar tooltip: {error}"),
-    }
-}
-
-/// Creates the recording overlay panel and keeps it hidden by default (macOS)
 #[cfg(target_os = "macos")]
 pub fn create_recording_overlay(app_handle: &AppHandle) {
     let settings = settings::get_settings(app_handle);
-    let (initial_width, initial_height) = overlay_dimensions("resting", settings.overlay_position);
+    let (initial_width, initial_height) = stage_size(app_handle, settings.overlay_position);
     if let Some((x, y)) = calculate_overlay_position(app_handle, initial_width, initial_height) {
         // PanelBuilder creates a Tauri window then converts it to NSPanel.
         // The window remains registered, so get_webview_window() still works.
@@ -784,113 +657,6 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     }
 }
 
-#[cfg(target_os = "macos")]
-pub fn create_flowbar_tooltip(app_handle: &AppHandle) {
-    match PanelBuilder::<_, FlowBarTooltipPanel>::new(app_handle, "flowbar_tooltip")
-        .url(WebviewUrl::App("src/overlay/tooltip.html".into()))
-        .title("Flow Bar Tooltip")
-        .level(PanelLevel::Status)
-        .size(tauri::Size::Logical(tauri::LogicalSize {
-            width: TOOLTIP_WIDTH,
-            height: TOOLTIP_HEIGHT,
-        }))
-        .has_shadow(false)
-        .transparent(true)
-        .no_activate(true)
-        .ignores_mouse_events(true)
-        .corner_radius(0.0)
-        .style_mask(StyleMask::empty().borderless().nonactivating_panel())
-        .with_window(|window| window.decorations(false).transparent(true).focusable(false))
-        .collection_behavior(
-            CollectionBehavior::new()
-                .can_join_all_spaces()
-                .full_screen_auxiliary(),
-        )
-        .build()
-    {
-        Ok(panel) => panel.hide(),
-        Err(error) => log::error!("Failed to create Flow Bar tooltip panel: {error}"),
-    }
-}
-
-fn tooltip_position_for_bounds(
-    position: tauri::LogicalPosition<f64>,
-    size: tauri::LogicalSize<f64>,
-    dock: OverlayPosition,
-    kind: &str,
-) -> (f64, f64) {
-    let gap = if kind == "dictate" {
-        BUBBLE_TOOLTIP_GAP
-    } else {
-        ACTION_TOOLTIP_GAP
-    };
-    match dock {
-        OverlayPosition::Bottom => (
-            position.x + (size.width - TOOLTIP_WIDTH) / 2.0,
-            // The 30 px pill is bottom-pinned inside 6 px hot-area padding.
-            position.y + size.height - FLOW_BAR_PADDING - FLOW_BAR_THICKNESS - gap - TOOLTIP_HEIGHT,
-        ),
-        OverlayPosition::Left => (
-            position.x + FLOW_BAR_PADDING + FLOW_BAR_THICKNESS + gap,
-            position.y + (size.height - TOOLTIP_HEIGHT) / 2.0,
-        ),
-        OverlayPosition::Right => (
-            position.x + size.width - FLOW_BAR_PADDING - FLOW_BAR_THICKNESS - gap - TOOLTIP_WIDTH,
-            position.y + (size.height - TOOLTIP_HEIGHT) / 2.0,
-        ),
-    }
-}
-
-fn flowbar_tooltip_position(app: &AppHandle, kind: &str) -> Result<(f64, f64), String> {
-    let bar = app
-        .get_webview_window("recording_overlay")
-        .ok_or_else(|| "Flow Bar window is unavailable".to_string())?;
-    let scale = bar.scale_factor().map_err(|error| error.to_string())?;
-    let position = bar
-        .outer_position()
-        .map_err(|error| error.to_string())?
-        .to_logical::<f64>(scale);
-    let size = bar
-        .outer_size()
-        .map_err(|error| error.to_string())?
-        .to_logical::<f64>(scale);
-
-    Ok(tooltip_position_for_bounds(
-        position,
-        size,
-        settings::get_settings(app).overlay_position,
-        kind,
-    ))
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn show_flowbar_tooltip(app: AppHandle, kind: String) -> Result<(), String> {
-    if kind != "dictate" && kind != "cancel" && kind != "finish" {
-        return Err("Unknown Flow Bar tooltip".to_string());
-    }
-    let tooltip = app
-        .get_webview_window("flowbar_tooltip")
-        .ok_or_else(|| "Flow Bar tooltip is unavailable".to_string())?;
-    let (x, y) = flowbar_tooltip_position(&app, &kind)?;
-    tooltip
-        .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
-        .map_err(|error| error.to_string())?;
-    tooltip
-        .emit("flowbar-tooltip", kind)
-        .map_err(|error| error.to_string())?;
-    tooltip.show().map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn hide_flowbar_tooltip(app: AppHandle) -> Result<(), String> {
-    if let Some(tooltip) = app.get_webview_window("flowbar_tooltip") {
-        tooltip.hide().map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
 fn show_overlay_state(app_handle: &AppHandle, state: &str) {
     // Published at request time (before the main-thread hop), so a failure
     // reported meanwhile sees that a session owns the bar.
@@ -917,19 +683,10 @@ fn show_overlay_state(app_handle: &AppHandle, state: &str) {
 }
 
 fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
-    // Keep the previous native bounds for the 100 ms active -> resting morph.
-    // Shrinking the window before the CSS transition completes clips the pill.
     OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst);
-    let next_state_code = overlay_state_code(state);
-    let previous_state_code = CURRENT_OVERLAY_STATE.swap(next_state_code, Ordering::Relaxed);
-    let should_delay_collapse = next_state_code == 0 && previous_state_code != 0;
-    let geometry_state = if should_delay_collapse {
-        overlay_state_from_code(previous_state_code)
-    } else {
-        state
-    };
+    CURRENT_OVERLAY_STATE.store(overlay_state_code(state), Ordering::Relaxed);
     let position = settings::get_settings(app_handle).overlay_position;
-    let (width, height) = overlay_dimensions(geometry_state, position);
+    let (width, height) = stage_size(app_handle, position);
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
         #[cfg(target_os = "linux")]
         update_gtk_layer_shell_anchors(&overlay_window);
@@ -984,24 +741,6 @@ fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
             set_pos_elapsed,
             show_elapsed
         );
-
-        if should_delay_collapse {
-            let handle = app_handle.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(
-                    FLOW_BAR_MORPH_COLLAPSE_DELAY_MS,
-                ));
-                if CURRENT_OVERLAY_STATE.load(Ordering::Relaxed) != 0 {
-                    return;
-                }
-                let main_handle = handle.clone();
-                let _ = handle.run_on_main_thread(move || {
-                    if CURRENT_OVERLAY_STATE.load(Ordering::Relaxed) == 0 {
-                        update_overlay_position_on_main(&main_handle);
-                    }
-                });
-            });
-        }
     }
 }
 
@@ -1057,11 +796,21 @@ pub fn update_overlay_position(app_handle: &AppHandle) {
     let _ = app_handle.run_on_main_thread(move || update_overlay_position_on_main(&handle));
 }
 
-/// Expands the existing transparent panel to the cursor's monitor while the
-/// user drags the Flow Bar. The renderer owns the ghost and drop targets.
+/// The work-area insets of the monitor, so the drop zones avoid the Dock and
+/// menu bar (Flow sends the same with `SetDragOverlay`).
+#[derive(Clone, Copy, Debug, serde::Serialize, specta::Type)]
+pub struct DragInsets {
+    top: f64,
+    bottom: f64,
+    left: f64,
+    right: f64,
+}
+
+/// Expands the stage to the cursor's monitor while the user drags the bar.
+/// The renderer draws the dim overlay, drop zones and ghost.
 #[tauri::command]
 #[specta::specta]
-pub fn begin_overlay_drag(app: AppHandle) -> Result<(), String> {
+pub fn begin_overlay_drag(app: AppHandle) -> Result<DragInsets, String> {
     let monitor = get_monitor_with_cursor(&app)
         .ok_or_else(|| "failed to determine the monitor containing the cursor".to_string())?;
     let scale = monitor.scale_factor();
@@ -1069,9 +818,18 @@ pub fn begin_overlay_drag(app: AppHandle) -> Result<(), String> {
     let y = monitor.position().y as f64 / scale;
     let width = monitor.size().width as f64 / scale;
     let height = monitor.size().height as f64 / scale;
+    let work = monitor.work_area();
+    let (wx, wy) = (
+        work.position.x as f64 / scale,
+        work.position.y as f64 / scale,
+    );
+    let (ww, wh) = (
+        work.size.width as f64 / scale,
+        work.size.height as f64 / scale,
+    );
     let window = app
         .get_webview_window("recording_overlay")
-        .ok_or_else(|| "Flow Bar window is unavailable".to_string())?;
+        .ok_or_else(|| "bar window is unavailable".to_string())?;
 
     window
         .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
@@ -1080,7 +838,12 @@ pub fn begin_overlay_drag(app: AppHandle) -> Result<(), String> {
         .set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }))
         .map_err(|error| error.to_string())?;
     let _ = window.show();
-    Ok(())
+    Ok(DragInsets {
+        top: (wy - y).max(0.0),
+        bottom: (y + height - (wy + wh)).max(0.0),
+        left: (wx - x).max(0.0),
+        right: (x + width - (wx + ww)).max(0.0),
+    })
 }
 
 /// Persists the selected edge and collapses the drag surface back around the
@@ -1099,8 +862,7 @@ pub fn finish_overlay_drag(app: AppHandle, edge: String) -> Result<(), String> {
     app_settings.overlay_position = position;
     settings::write_settings(&app, app_settings);
 
-    let state = current_overlay_state();
-    let (width, height) = overlay_dimensions(state, position);
+    let (width, height) = stage_size(&app, position);
     let window = app
         .get_webview_window("recording_overlay")
         .ok_or_else(|| "Flow Bar window is unavailable".to_string())?;
@@ -1256,9 +1018,8 @@ fn update_overlay_position_on_main(app_handle: &AppHandle) {
 
         #[cfg(target_os = "windows")]
         {
-            let state = current_overlay_state();
             let position = settings::get_settings(app_handle).overlay_position;
-            let (width, height) = overlay_dimensions(state, position);
+            let (width, height) = stage_size(app_handle, position);
             if let Err(error) = place_windows_overlay(app_handle, &overlay_window, width, height) {
                 log::error!("Failed to update recording overlay position: {error}");
             }
@@ -1267,7 +1028,7 @@ fn update_overlay_position_on_main(app_handle: &AppHandle) {
         #[cfg(not(target_os = "windows"))]
         {
             let position = settings::get_settings(app_handle).overlay_position;
-            let (width, height) = overlay_dimensions(current_overlay_state(), position);
+            let (width, height) = stage_size(app_handle, position);
             let _ =
                 overlay_window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
             if let Some((x, y)) = calculate_overlay_position(app_handle, width, height) {
@@ -1348,31 +1109,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn overlay_geometry_tracks_state_and_dock_edge() {
-        assert_eq!(
-            overlay_dimensions("resting", OverlayPosition::Bottom),
-            (BOTTOM_REST_WIDTH, BOTTOM_HEIGHT)
-        );
-        assert_eq!(
-            overlay_dimensions("recording-toggle", OverlayPosition::Left),
-            (SIDE_ACTIVE_WIDTH, SIDE_ACTIVE_HEIGHT)
-        );
-        assert_eq!(
-            overlay_dimensions("processing", OverlayPosition::Right),
-            (SIDE_WORK_WIDTH, SIDE_WORK_HEIGHT)
-        );
-        assert_eq!(
-            overlay_dimensions("streaming", OverlayPosition::Bottom),
-            (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
-        );
-        assert_eq!(
-            overlay_dimensions("paste-recovery", OverlayPosition::Right),
-            (RECOVERY_WIDTH, RECOVERY_HEIGHT)
-        );
-        assert_eq!(
-            overlay_dimensions("notice", OverlayPosition::Bottom),
-            (NOTICE_WIDTH, NOTICE_HEIGHT)
-        );
+    fn catch_rects_are_half_open() {
+        let rect = CatchRect {
+            x: 10.0,
+            y: 20.0,
+            width: 50.0,
+            height: 30.0,
+        };
+        assert!(rect.contains(10.0, 20.0));
+        assert!(rect.contains(59.9, 49.9));
+        assert!(!rect.contains(60.0, 30.0));
+        assert!(!rect.contains(9.9, 30.0));
     }
 
     #[test]
@@ -1390,137 +1137,6 @@ mod tests {
         ] {
             assert_eq!(overlay_state_from_code(overlay_state_code(state)), state);
         }
-    }
-
-    #[test]
-    fn tooltip_geometry_uses_flow_offsets_from_the_visible_pill() {
-        let origin = tauri::LogicalPosition::new(100.0, 200.0);
-
-        assert_eq!(
-            tooltip_position_for_bounds(
-                origin,
-                tauri::LogicalSize::new(BOTTOM_ACTIVE_WIDTH, BOTTOM_HEIGHT),
-                OverlayPosition::Bottom,
-                "finish",
-            ),
-            (78.0, 174.0)
-        );
-        assert_eq!(
-            tooltip_position_for_bounds(
-                origin,
-                tauri::LogicalSize::new(SIDE_ACTIVE_WIDTH, SIDE_ACTIVE_HEIGHT),
-                OverlayPosition::Left,
-                "cancel",
-            ),
-            (146.0, 249.0)
-        );
-        assert_eq!(
-            tooltip_position_for_bounds(
-                origin,
-                tauri::LogicalSize::new(SIDE_REST_WIDTH, SIDE_REST_HEIGHT),
-                OverlayPosition::Right,
-                "dictate",
-            ),
-            (-62.0, 221.0)
-        );
-    }
-
-    #[test]
-    fn resting_hit_rect_is_tight_until_hover_then_adds_ready_hysteresis() {
-        assert_eq!(
-            flowbar_hit_rect(
-                "resting",
-                OverlayPosition::Right,
-                SIDE_REST_WIDTH,
-                SIDE_REST_HEIGHT,
-                false,
-            ),
-            FlowBarHitRect {
-                x: 34.0,
-                y: 12.0,
-                width: 20.0,
-                height: 52.0,
-            }
-        );
-        assert_eq!(
-            flowbar_hit_rect(
-                "resting",
-                OverlayPosition::Bottom,
-                BOTTOM_REST_WIDTH,
-                BOTTOM_HEIGHT,
-                false,
-            ),
-            FlowBarHitRect {
-                x: 8.0,
-                y: 34.0,
-                width: 60.0,
-                height: 20.0,
-            }
-        );
-        assert_eq!(
-            flowbar_hit_rect(
-                "resting",
-                OverlayPosition::Right,
-                SIDE_REST_WIDTH,
-                SIDE_REST_HEIGHT,
-                true,
-            ),
-            FlowBarHitRect {
-                x: 12.0,
-                y: 7.0,
-                width: 42.0,
-                height: 62.0,
-            }
-        );
-    }
-
-    #[test]
-    fn active_hit_rect_tracks_rotated_side_pills() {
-        assert_eq!(
-            flowbar_hit_rect(
-                "recording-toggle",
-                OverlayPosition::Right,
-                SIDE_ACTIVE_WIDTH,
-                SIDE_ACTIVE_HEIGHT,
-                true,
-            ),
-            FlowBarHitRect {
-                x: 12.0,
-                y: 8.75,
-                width: 42.0,
-                height: 114.5,
-            }
-        );
-        assert_eq!(
-            flowbar_hit_rect(
-                "paste-recovery",
-                OverlayPosition::Bottom,
-                RECOVERY_WIDTH,
-                RECOVERY_HEIGHT,
-                false,
-            ),
-            FlowBarHitRect {
-                x: 0.0,
-                y: 0.0,
-                width: RECOVERY_WIDTH,
-                height: RECOVERY_HEIGHT,
-            }
-        );
-        assert_eq!(
-            flowbar_hit_rect(
-                "processing",
-                OverlayPosition::Left,
-                SIDE_WORK_WIDTH,
-                SIDE_WORK_HEIGHT,
-                true,
-            ),
-            FlowBarHitRect {
-                x: 0.0,
-                y: 11.0,
-                width: 42.0,
-                height: 110.0,
-            }
-        );
     }
 
     #[test]

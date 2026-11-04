@@ -126,10 +126,10 @@ async changeOverlayStyleSetting(style: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * Expands the existing transparent panel to the cursor's monitor while the
- * user drags the Flow Bar. The renderer owns the ghost and drop targets.
+ * Expands the stage to the cursor's monitor while the user drags the bar.
+ * The renderer draws the dim overlay, drop zones and ghost.
  */
-async beginOverlayDrag() : Promise<Result<null, string>> {
+async beginOverlayDrag() : Promise<Result<DragInsets, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("begin_overlay_drag") };
 } catch (e) {
@@ -158,21 +158,11 @@ async toggleOverlayDictation() : Promise<void> {
 async dismissOverlayCard() : Promise<void> {
     await TAURI_INVOKE("dismiss_overlay_card");
 },
-async showFlowbarTooltip(kind: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("show_flowbar_tooltip", { kind }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async hideFlowbarTooltip() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("hide_flowbar_tooltip") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
+/**
+ * The renderer reports its interactive rectangles whenever they change.
+ */
+async reportBarCatchRects(rects: CatchRect[]) : Promise<void> {
+    await TAURI_INVOKE("report_bar_catch_rects", { rects });
 },
 async changeDebugModeSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -1238,6 +1228,10 @@ export type AutoUnavailableReason =
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 /**
+ * A rectangle (stage coordinates, logical points) that catches the mouse.
+ */
+export type CatchRect = { x: number; y: number; width: number; height: number }
+/**
  * Script applied to Mandarin and Cantonese output. Traditional carries its region
  * (Taiwan vs Hong Kong forms, e.g. 裡/裏) rather than guessing it.
  */
@@ -1256,6 +1250,11 @@ export type ChineseScript =
 "traditional_hk"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
+/**
+ * The work-area insets of the monitor, so the drop zones avoid the Dock and
+ * menu bar (Flow sends the same with `SetDragOverlay`).
+ */
+export type DragInsets = { top: number; bottom: number; left: number; right: number }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean; 
 /**

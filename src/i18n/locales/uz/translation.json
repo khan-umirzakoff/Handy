@@ -982,7 +982,10 @@
     "finishAndPaste": "Tugatish va qoʻyish",
     "pasteRecoveryHint": "Diktovkadan oldin matn maydonini tanlang",
     "pasteRecoveryCopy": "Diktovkadan nusxa olish",
-    "pasteRecoveryCopied": "Nusxa olindi"
+    "pasteRecoveryCopied": "Nusxa olindi",
+    "dictate": "Gapiring",
+    "cancel": "Bekor qilish",
+    "pressToFinish": "Tugatish uchun <key>{{hotkey}}</key> ni bosing"
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} 1 ta tezkor tugmani bloklayotgan boʻlishi mumkin",

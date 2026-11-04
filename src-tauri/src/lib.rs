@@ -396,7 +396,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Create the recording overlay window (hidden by default)
     utils::create_recording_overlay(app_handle);
-    utils::create_flowbar_tooltip(app_handle);
 }
 
 #[tauri::command]
@@ -703,8 +702,7 @@ pub fn run(cli_args: CliArgs) {
             overlay::finish_overlay_drag,
             overlay::toggle_overlay_dictation,
             overlay::dismiss_overlay_card,
-            overlay::show_flowbar_tooltip,
-            overlay::hide_flowbar_tooltip,
+            overlay::report_bar_catch_rects,
             shortcut::change_debug_mode_setting,
             shortcut::change_word_correction_threshold_setting,
             shortcut::change_extra_recording_buffer_setting,
