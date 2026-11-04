@@ -1320,9 +1320,12 @@ fn run_setup(info: &LoadedInfo, settings: &AppSettings, language: LanguageDecisi
         languages
     );
 
+    let profile = crate::model_profiles::for_variant(&info.variant);
     let run_plan = transcribe_cpp_run_plan(
         settings.translate_to_english,
-        language.intent(),
+        // An Uzbek fine-tune is always told Uzbek: auto-detect is what broke
+        // these models in Handy (research/uzbek-models.md, "English forcing").
+        profile.as_ref().map_or(language.intent(), |p| p.language),
         &languages,
         model_supports_translate,
     );
@@ -1356,6 +1359,7 @@ fn run_setup(info: &LoadedInfo, settings: &AppSettings, language: LanguageDecisi
         language: run_plan.language,
         target_language: run_plan.target_language,
         vocabulary: vocabulary_for_model(info.supports_vocabulary, &settings.custom_words),
+        family: profile.as_ref().map(|p| p.run_extension()),
         ..Default::default()
     };
 

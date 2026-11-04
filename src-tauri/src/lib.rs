@@ -17,6 +17,7 @@ mod languages;
 mod llm_client;
 mod managers;
 mod memory;
+mod model_profiles;
 mod notices;
 mod overlay;
 mod paste_tx;
