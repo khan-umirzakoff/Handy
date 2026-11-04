@@ -977,7 +977,12 @@
   "overlay": {
     "transcribing": "Transcribiendo...",
     "processing": "Procesando...",
-    "loadingModel": "Cargando modelo..."
+    "loadingModel": "Cargando modelo...",
+    "clickToDictate": "Click to dictate",
+    "finishAndPaste": "Finish and paste",
+    "pasteRecoveryHint": "Select a text field before dictating",
+    "pasteRecoveryCopy": "Copy dictation",
+    "pasteRecoveryCopied": "Copied"
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} puede estar bloqueando 1 atajo",

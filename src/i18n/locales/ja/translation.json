@@ -977,7 +977,12 @@
   "overlay": {
     "transcribing": "文字起こし中…",
     "processing": "処理中…",
-    "loadingModel": "モデルを読み込み中…"
+    "loadingModel": "モデルを読み込み中…",
+    "clickToDictate": "Click to dictate",
+    "finishAndPaste": "Finish and paste",
+    "pasteRecoveryHint": "Select a text field before dictating",
+    "pasteRecoveryCopy": "Copy dictation",
+    "pasteRecoveryCopied": "Copied"
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} が1個のショートカットをブロックしている可能性があります",

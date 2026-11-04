@@ -977,7 +977,12 @@
   "overlay": {
     "transcribing": "正在轉錄...",
     "processing": "處理中...",
-    "loadingModel": "正在載入模型..."
+    "loadingModel": "正在載入模型...",
+    "clickToDictate": "Click to dictate",
+    "finishAndPaste": "Finish and paste",
+    "pasteRecoveryHint": "Select a text field before dictating",
+    "pasteRecoveryCopy": "Copy dictation",
+    "pasteRecoveryCopied": "Copied"
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} 可能正在阻擋 1 個快捷鍵",
