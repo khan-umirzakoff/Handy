@@ -25,7 +25,7 @@
     "customModelDescription": "Nicht offiziell unterstützt",
     "migration": {
       "title": "Deine Modelle brauchen ein Update",
-      "description": "Handy verwendet jetzt eine neuere Art von Modellen. Lade die neue Version herunter, um weiter zu transkribieren. Alte Versionen werden entfernt.",
+      "description": "Shivir verwendet jetzt eine neuere Art von Modellen. Lade die neue Version herunter, um weiter zu transkribieren. Alte Versionen werden entfernt.",
       "replaces": "Ersetzt {{name}}",
       "oldFormat": "Altes Format",
       "failed": "Download fehlgeschlagen",
@@ -62,11 +62,11 @@
     "permissions": {
       "microphone": {
         "name": "Mikrofon",
-        "why": "Damit Handy dich hören kann. Audio wird auf diesem Computer in Text umgewandelt und nie hochgeladen."
+        "why": "Damit Shivir dich hören kann. Audio wird auf diesem Computer in Text umgewandelt und nie hochgeladen."
       },
       "accessibility": {
         "name": "Bedienungshilfen",
-        "why": "Damit dein Tastenkürzel in jeder App funktioniert und Handy den Text dort eintippen kann, wo dein Cursor steht."
+        "why": "Damit dein Tastenkürzel in jeder App funktioniert und Shivir den Text dort eintippen kann, wo dein Cursor steht."
       },
       "errors": {
         "checkFailed": "Berechtigungsprüfung fehlgeschlagen. Bitte erneut versuchen.",
@@ -80,12 +80,12 @@
       "openSettings": "Einstellungen öffnen",
       "allowed": "Erlaubt",
       "waiting": "Warten",
-      "turnOnMac": "Aktiviere Handy in den Systemeinstellungen und komm dann hierher zurück.",
+      "turnOnMac": "Aktiviere Shivir in den Systemeinstellungen und komm dann hierher zurück.",
       "turnOnWindows": "Aktiviere den Mikrofonzugriff in den Windows-Einstellungen und komm dann hierher zurück.",
       "hintBoth": "Erlaube beides, um fortzufahren",
       "hintMicrophone": "Erlaube das Mikrofon, um fortzufahren",
       "welcomeBack": "Willkommen zurück. Es geht dort weiter, wo du aufgehört hast.",
-      "relaunch": "Tastenkürzel reagiert danach nicht? <relaunch>Handy neu starten</relaunch> und du landest direkt wieder hier."
+      "relaunch": "Tastenkürzel reagiert danach nicht? <relaunch>Shivir neu starten</relaunch> und du landest direkt wieder hier."
     },
     "shell": {
       "back": "Zurück",
@@ -96,11 +96,11 @@
       "title": "Sprechen statt tippen, in jeder App",
       "subtitle": "Wähle die Sprachen, in denen du diktierst",
       "languagesLabel": "Sprachen",
-      "noMatch": "Keine Sprache passt zu „{{query}}“. Die Modelle von Handy decken etwa 100 Sprachen ab; weitere findest du in den Einstellungen.",
+      "noMatch": "Keine Sprache passt zu „{{query}}“. Die Modelle von Shivir decken etwa 100 Sprachen ab; weitere findest du in den Einstellungen.",
       "appLanguage": "App-Sprache",
       "menusIn": "Menüs auf <b>{{language}}</b>",
       "chinese": {
-        "question": "Du sprichst {{languages}}. Welche Schriftzeichen soll Handy schreiben?",
+        "question": "Du sprichst {{languages}}. Welche Schriftzeichen soll Shivir schreiben?",
         "label": "Chinesische Schriftzeichen",
         "zh-Hans": "Vereinfacht",
         "zh-Hant": "Taiwan",
@@ -170,7 +170,7 @@
     },
     "try": {
       "title": "Probier es aus!",
-      "subtitle": "Handy ist in der Ecke und führt dich durch",
+      "subtitle": "Shivir ist in der Ecke und führt dich durch",
       "noteLabel": "Notiz",
       "placeholder": "Neue Notiz",
       "hold": "Halte <keys/> gedrückt und sprich.",
@@ -198,14 +198,14 @@
     },
     "done": {
       "title": "Alles bereit",
-      "subMac": "Handy ist jetzt in deiner Menüleiste. Halte <keys/> gedrückt oder tippe darauf, um in jeder App zu sprechen.",
-      "subTray": "Handy ist jetzt in deinem Infobereich. Halte <keys/> gedrückt oder tippe darauf, um in jeder App zu sprechen.",
+      "subMac": "Shivir ist jetzt in deiner Menüleiste. Halte <keys/> gedrückt oder tippe darauf, um in jeder App zu sprechen.",
+      "subTray": "Shivir ist jetzt in deinem Infobereich. Halte <keys/> gedrückt oder tippe darauf, um in jeder App zu sprechen.",
       "hint": "Du kannst das später in den Einstellungen ändern",
       "highFiveLabel": "High Five",
-      "atLogin": "Handy beim Anmelden starten",
+      "atLogin": "Shivir beim Anmelden starten",
       "finish": "Fertig",
       "panel": {
-        "name": "Handy",
+        "name": "Shivir",
         "ready": "Bereit",
         "languages": "Sprachen",
         "model": "Sprachmodell",
@@ -330,7 +330,7 @@
     "general": {
       "title": "Allgemein",
       "shortcut": {
-        "title": "Handy-Tastenkürzel",
+        "title": "Shivir-Tastenkürzel",
         "description": "Tastenkürzel für die Sprachaufnahme konfigurieren",
         "loading": "Tastenkürzel werden geladen...",
         "none": "Keine Tastenkürzel konfiguriert",
@@ -372,7 +372,7 @@
       },
       "preferredLanguages": {
         "title": "Bevorzugte Sprachen",
-        "description": "Die Sprachen, die du sprichst. Handy nutzt sie, um Modelle zu empfehlen.",
+        "description": "Die Sprachen, die du sprichst. Shivir nutzt sie, um Modelle zu empfehlen.",
         "noMatch": "Keine Sprache passt zu „{{query}}“",
         "weak": "Noch kein Modell erkennt {{languages}} gut."
       },
@@ -399,17 +399,17 @@
         "fits": "Für deine Sprachen",
         "untested": "Ungetestet"
       },
-      "untestedNote": "Nicht mit Handy getestet. Sie könnten langsamer sein oder mehr Fehler machen.",
+      "untestedNote": "Nicht mit Shivir getestet. Sie könnten langsamer sein oder mehr Fehler machen.",
       "untestedHidden_one": "{{count}} weiteres Modell ist nicht für Diktat optimiert. Suche danach, um es zu finden.",
       "untestedHidden_other": "{{count}} weitere Modelle sind nicht für Diktat optimiert. Suche danach, um eines zu finden.",
-      "emptyYours": "Noch keine Modelle. Wähle unten eines aus: Es wird heruntergeladen, dann nutzt Handy es.",
+      "emptyYours": "Noch keine Modelle. Wähle unten eines aus: Es wird heruntergeladen, dann nutzt Shivir es.",
       "showMore": "{{count}} weitere anzeigen",
       "showFewer": "Weniger anzeigen",
       "download": "Herunterladen und verwenden",
       "downloadingThenUse": "{{percent}} % von {{total}}, dann wird gewechselt",
       "loading": "Wird geladen…",
       "deleteAsk": "{{name}} löschen? Das gibt {{size}} frei.",
-      "deleteAskActive": "{{name}} löschen? Handy kann erst wieder transkribieren, wenn du ein anderes wählst.",
+      "deleteAskActive": "{{name}} löschen? Shivir kann erst wieder transkribieren, wenn du ein anderes wählst.",
       "cancel": "Abbrechen",
       "deleteModel": "{{name}} löschen",
       "cancelDownload": "Download von {{name}} abbrechen",
@@ -423,14 +423,14 @@
         "marks": "? wurde noch nicht gemessen. — versteht diese Sprache nicht."
       },
       "retiredNotice": {
-        "title": "Alte Modelle funktionieren nicht mehr mit Handy",
+        "title": "Alte Modelle funktionieren nicht mehr mit Shivir",
         "description": "Sie belegen {{size}} auf deinem Computer.",
         "delete": "Modelle löschen",
         "deleteFailed": "Einige alte Modelle konnten nicht gelöscht werden. Details findest du im Protokoll."
       },
       "rescan": {
         "label": "Neu scannen",
-        "tooltip": "Erneut nach Modellen scannen, die außerhalb von Handy zum Modellordner oder Hugging-Face-Cache hinzugefügt wurden"
+        "tooltip": "Erneut nach Modellen scannen, die außerhalb von Shivir zum Modellordner oder Hugging-Face-Cache hinzugefügt wurden"
       }
     },
     "languages": {
@@ -500,11 +500,11 @@
       },
       "autostart": {
         "label": "Beim Start ausführen",
-        "description": "Handy automatisch beim Anmelden starten."
+        "description": "Shivir automatisch beim Anmelden starten."
       },
       "showTrayIcon": {
         "label": "Taskleistensymbol anzeigen",
-        "description": "Das Handy-Symbol in der Taskleiste anzeigen."
+        "description": "Das Shivir-Symbol in der Taskleiste anzeigen."
       },
       "overlay": {
         "style": {
@@ -521,7 +521,8 @@
           "description": "Visuelles Feedback-Overlay während Aufnahme und Transkription anzeigen. Unter Linux wird 'Keine' empfohlen.",
           "options": {
             "bottom": "Unten",
-            "top": "Oben"
+            "left": "Links",
+            "right": "Rechts"
           }
         }
       },
@@ -741,7 +742,7 @@
       },
       "updateChecks": {
         "label": "Nach Updates suchen",
-        "description": "Automatisch nach neuen Versionen von Handy suchen",
+        "description": "Automatisch nach neuen Versionen von Shivir suchen",
         "lockedDescription": "Durch Systemkonfiguration deaktiviert (HANDY_DISABLE_UPDATER)"
       },
       "whatsNewPreview": {
@@ -847,7 +848,7 @@
       },
       "keyboardDiagnostic": {
         "title": "Tastatur-Diagnose",
-        "description": "Prüft, ob Tastaturereignisse Handy erreichen. Es wird nur die Anzahl der Ereignisse erfasst — niemals, welche Tasten du drückst.",
+        "description": "Prüft, ob Tastaturereignisse Shivir erreichen. Es wird nur die Anzahl der Ereignisse erfasst — niemals, welche Tasten du drückst.",
         "run": "10-Sekunden-Diagnose starten",
         "running": "Lauscht… drücke dein Tastenkürzel ein paar Mal (z. B. Option+Space)",
         "secureInputLabel": "Secure Input",
@@ -861,7 +862,7 @@
         "mouse": "Maus",
         "verdictBlocked": "Secure Input blockiert Tastenereignisse — Tastenkürzel mit einer normalen Taste können erst wieder funktionieren, wenn das behoben ist.",
         "verdictSuspicious": "Es kamen Modifikator-Ereignisse an, aber keine Tastenereignisse — irgendetwas unterdrückt Tasten, obwohl Secure Input als deaktiviert gemeldet wird. Bitte melde das auf GitHub.",
-        "verdictOk": "Tastenereignisse erreichen Handy normal.",
+        "verdictOk": "Tastenereignisse erreichen Shivir normal.",
         "verdictNoEvents": "Keine Ereignisse erfasst — hast du während des Tests Tasten gedrückt?",
         "failed": "Diagnose fehlgeschlagen: {{error}}"
       }
@@ -870,15 +871,15 @@
       "title": "Info",
       "version": {
         "title": "Version",
-        "description": "Aktuelle Version von Handy"
+        "description": "Aktuelle Version von Shivir"
       },
       "whatsNewUpdates": {
         "label": "Neuerungen anzeigen",
-        "description": "Versionshinweise nach Handy-Updates anzeigen"
+        "description": "Versionshinweise nach Shivir-Updates anzeigen"
       },
       "appDataDirectory": {
         "title": "App-Datenverzeichnis",
-        "description": "Speicherort der Handy-Daten"
+        "description": "Speicherort der Shivir-Daten"
       },
       "sourceCode": {
         "title": "Quellcode",
@@ -895,7 +896,7 @@
         "ggml": {
           "title": "ggml",
           "description": "Hochleistungs-Inferenz des Whisper-Spracherkennungsmodells von OpenAI",
-          "details": "Handy verwendet ggml für schnelle, lokale Sprach-zu-Text-Verarbeitung. Dank an Georgi Gerganov und die Mitwirkenden für ihre großartige Arbeit."
+          "details": "Shivir verwendet ggml für schnelle, lokale Sprach-zu-Text-Verarbeitung. Dank an Georgi Gerganov und die Mitwirkenden für ihre großartige Arbeit."
         }
       }
     }
@@ -916,7 +917,7 @@
     "portableUpdateBrowseButton": "GitHub Releases öffnen"
   },
   "whatsNew": {
-    "title": "Neu in Handy v{{version}}"
+    "title": "Neu in Shivir v{{version}}"
   },
   "common": {
     "playbackPosition": "Wiedergabeposition",
@@ -941,7 +942,7 @@
     "noInputDeviceTitle": "Kein Mikrofon gefunden",
     "noInputDevice": "Es wurde kein Audio-Eingabegerät erkannt. Bitte schließe ein Mikrofon oder Headset an und versuche es erneut.",
     "recordingFailedTitle": "Aufnahmestart fehlgeschlagen",
-    "modelLoadFailed": "Handy konnte dieses Modell nicht laden. Versuche es erneut oder wähle ein anderes.",
+    "modelLoadFailed": "Shivir konnte dieses Modell nicht laden. Versuche es erneut oder wähle ein anderes.",
     "modelLoadFailedTitle": "Modell konnte nicht geladen werden",
     "modelDownloadFailed": "Download fehlgeschlagen",
     "pasteFailedTitle": "Text konnte nicht eingefügt werden",
@@ -962,11 +963,11 @@
   },
   "appLanguage": {
     "title": "Anwendungssprache",
-    "description": "Sprache der Handy-Oberfläche ändern"
+    "description": "Sprache der Shivir-Oberfläche ändern"
   },
   "theme": {
     "title": "Anwendungsdesign",
-    "description": "Wählen Sie, ob Handy dem Systemthema folgt oder hell bzw. dunkel bleibt",
+    "description": "Wählen Sie, ob Shivir dem Systemthema folgt oder hell bzw. dunkel bleibt",
     "options": {
       "system": "System",
       "light": "Hell",

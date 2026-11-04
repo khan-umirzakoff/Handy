@@ -395,6 +395,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Create the recording overlay window (hidden by default)
     utils::create_recording_overlay(app_handle);
+    utils::create_flowbar_tooltip(app_handle);
 }
 
 #[tauri::command]
@@ -697,6 +698,12 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_spoken_languages_setting,
             shortcut::change_overlay_position_setting,
             shortcut::change_overlay_style_setting,
+            overlay::begin_overlay_drag,
+            overlay::finish_overlay_drag,
+            overlay::toggle_overlay_dictation,
+            overlay::dismiss_overlay_card,
+            overlay::show_flowbar_tooltip,
+            overlay::hide_flowbar_tooltip,
             shortcut::change_debug_mode_setting,
             shortcut::change_word_correction_threshold_setting,
             shortcut::change_extra_recording_buffer_setting,
@@ -879,6 +886,12 @@ pub fn run(cli_args: CliArgs) {
                     .filter(|metadata| {
                         let file_level = FILE_LOG_LEVEL.load(Ordering::Relaxed);
                         metadata.level() <= level_filter_from_u8(file_level)
+                            // The native Flow Bar samples the cursor at 20 Hz.
+                            // Enigo logs every location() call at DEBUG, which
+                            // contains no diagnostic value and would otherwise
+                            // rotate the persistent log continuously.
+                            && !(metadata.target().starts_with("enigo::")
+                                && metadata.level() > log::Level::Warn)
                     }),
                     // Stream logs to the webview (via the `log://log` event) so the
                     // debug panel's live log viewer can show them in real time. Only
@@ -888,6 +901,8 @@ pub fn run(cli_args: CliArgs) {
                         WEBVIEW_LOG_STREAMING.load(Ordering::Relaxed)
                             && metadata.level()
                                 <= level_filter_from_u8(FILE_LOG_LEVEL.load(Ordering::Relaxed))
+                            && !(metadata.target().starts_with("enigo::")
+                                && metadata.level() > log::Level::Warn)
                     }),
                 ])
                 .build(),
@@ -998,7 +1013,7 @@ pub fn run(cli_args: CliArgs) {
             // for portable mode (redirects WebView2 cache to portable Data dir)
             let mut win_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
-                    .title("Handy")
+                    .title("Shivir")
                     .inner_size(utils::MAIN_WINDOW_SIZE.0, utils::MAIN_WINDOW_SIZE.1)
                     .min_inner_size(utils::MAIN_WINDOW_SIZE.0, utils::MAIN_WINDOW_SIZE.1)
                     .resizable(true)

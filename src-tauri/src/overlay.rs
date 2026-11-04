@@ -19,10 +19,10 @@ use tauri::WebviewUrl;
 use tauri_nspanel::{tauri_panel, CollectionBehavior, PanelBuilder, PanelLevel, StyleMask};
 
 #[cfg(target_os = "linux")]
-use crate::utils;
+use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 #[cfg(target_os = "linux")]
-use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
+use std::env;
 
 #[cfg(target_os = "macos")]
 tauri_panel! {
@@ -32,116 +32,345 @@ tauri_panel! {
             is_floating_panel: true
         }
     })
+
+    panel!(FlowBarTooltipPanel {
+        config: {
+            can_become_key_window: false,
+            is_floating_panel: true
+        }
+    })
 }
 
-// Native overlay window sizes (logical points). One window is reused for every
-// state and resized in `show_overlay_state`; each size need only be at least as
-// large as the card it hosts (the `--ov-*` vars in RecordingOverlay.css). The
-// card is CSS-anchored flush to the screen edge, so window height doesn't move
-// where the card sits — only OVERLAY_TOP_OFFSET / OVERLAY_BOTTOM_OFFSET do. Keep
-// these in sync with the CSS card geometry.
-//
-// On Windows these sizes are additionally multiplied by the accessibility text
-// scale (see windows_text_scale_factor), which WebView2 applies as a zoom.
-//
-// Compact overlay (Minimal / transcribing / processing): the 40h pill animates
-// width from 172 (--ov-rest-w) to 216 (--ov-work-w) and expands from center, so
-// the window must fit the widest state plus a little slack. The longest notice
-// titles need nearly all of it.
-const OVERLAY_WIDTH: f64 = 266.0;
-const OVERLAY_HEIGHT: f64 = 50.0;
+// The persistent Flow Bar keeps its native window tight around the painted
+// surface. That is important because Tauri cannot do Electron-style per-pixel
+// hit testing: a large transparent window would swallow clicks. Dimensions are
+// therefore state- and dock-aware and mirror the independently implemented CSS.
+const BOTTOM_REST_WIDTH: f64 = 76.0;
+const BOTTOM_PTT_WIDTH: f64 = 103.0;
+const BOTTOM_ACTIVE_WIDTH: f64 = 132.0;
+const BOTTOM_HEIGHT: f64 = 54.0;
+const SIDE_REST_WIDTH: f64 = 54.0;
+const SIDE_REST_HEIGHT: f64 = 76.0;
+const SIDE_PTT_HEIGHT: f64 = 103.0;
+const SIDE_ACTIVE_WIDTH: f64 = 54.0;
+const SIDE_ACTIVE_HEIGHT: f64 = 132.0;
+const SIDE_WORK_WIDTH: f64 = 54.0;
+const SIDE_WORK_HEIGHT: f64 = 132.0;
+const RECOVERY_WIDTH: f64 = 400.0;
+const RECOVERY_HEIGHT: f64 = 190.0;
+const NOTICE_WIDTH: f64 = 360.0;
+const NOTICE_HEIGHT: f64 = 124.0;
+const TOOLTIP_WIDTH: f64 = 176.0;
+const TOOLTIP_HEIGHT: f64 = 34.0;
+const BUBBLE_TOOLTIP_GAP: f64 = 4.0;
+const ACTION_TOOLTIP_GAP: f64 = 10.0;
+const FLOW_BAR_PADDING: f64 = 6.0;
+const FLOW_BAR_THICKNESS: f64 = 30.0;
 
 // Actual is 394x118, just a little extra
 const OVERLAY_STREAM_WIDTH: f64 = 400.0;
 const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 
-const NOTICE_STATE: &str = "notice";
-const LIVE_NOTICE_STATE: &str = "live_notice";
-
-/// How long a notice holds before the overlay fades it.
-const NOTICE_HOLD: Duration = Duration::from_secs(4);
-
-fn is_live_state(state: &str) -> bool {
-    state == "streaming" || state == LIVE_NOTICE_STATE
-}
-
-/// The notice form that matches the session it replaces, so the window never
-/// changes size for one. A notice with no session gets the compact form.
-fn notice_state(session_is_live: bool) -> &'static str {
-    if session_is_live {
-        LIVE_NOTICE_STATE
-    } else {
-        NOTICE_STATE
-    }
-}
-
-/// Overlay window size (logical) for a given UI state.
-fn overlay_dimensions(state: &str) -> (f64, f64) {
-    if is_live_state(state) {
+/// Overlay window size (logical points) for a given UI state and dock edge.
+fn overlay_dimensions(state: &str, position: OverlayPosition) -> (f64, f64) {
+    if state == "paste-recovery" {
+        (RECOVERY_WIDTH, RECOVERY_HEIGHT)
+    } else if state == "notice" {
+        (NOTICE_WIDTH, NOTICE_HEIGHT)
+    } else if state == "streaming" {
         (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
+    } else if matches!(position, OverlayPosition::Bottom) {
+        let width = match state {
+            "recording-ptt" => BOTTOM_PTT_WIDTH,
+            "recording-toggle" | "transcribing" | "processing" | "error" => BOTTOM_ACTIVE_WIDTH,
+            _ => BOTTOM_REST_WIDTH,
+        };
+        (width, BOTTOM_HEIGHT)
     } else {
-        (OVERLAY_WIDTH, OVERLAY_HEIGHT)
+        match state {
+            "recording-ptt" => (SIDE_ACTIVE_WIDTH, SIDE_PTT_HEIGHT),
+            "recording-toggle" => (SIDE_ACTIVE_WIDTH, SIDE_ACTIVE_HEIGHT),
+            "transcribing" | "processing" | "error" => (SIDE_WORK_WIDTH, SIDE_WORK_HEIGHT),
+            _ => (SIDE_REST_WIDTH, SIDE_REST_HEIGHT),
+        }
     }
 }
 
 static LAST_MIC_LEVEL_EMIT: AtomicU64 = AtomicU64::new(0);
 const EMIT_THROTTLE_MS: u64 = 33; // ~30 FPS
 
-#[cfg(target_os = "macos")]
-const OVERLAY_TOP_OFFSET: f64 = 46.0;
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-const OVERLAY_TOP_OFFSET: f64 = 4.0;
+// 0 resting, 1 recording-ptt, 2 streaming, 3 transcribing, 4 processing,
+// 5 error, 6 recording-toggle, 7 paste-recovery, 8 notice.
+// Geometry updates can happen independently of state events (settings change,
+// monitor move), so the native side retains the last requested state.
+static CURRENT_OVERLAY_STATE: AtomicU64 = AtomicU64::new(0);
+const FLOW_BAR_MORPH_COLLAPSE_DELAY_MS: u64 = 110;
 
 #[cfg(target_os = "macos")]
-const OVERLAY_BOTTOM_OFFSET: f64 = 15.0;
+static FLOW_BAR_HIT_TEST_STARTED: AtomicBool = AtomicBool::new(false);
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-const OVERLAY_BOTTOM_OFFSET: f64 = 40.0;
+#[cfg(target_os = "macos")]
+// No cursor sample has been applied when the panel is created. Starting false
+// makes the first sample inside the resting catch rect a real transition.
+static FLOW_BAR_ACCEPTS_MOUSE: AtomicBool = AtomicBool::new(false);
 
-/// Configures the edge and offset of a GTK layer surface. gtk-layer-shell
-/// commits anchor and margin changes itself, including while the surface is
-/// mapped, so changing position does not require a manual hide/show cycle.
-#[cfg(target_os = "linux")]
-fn configure_layer_shell_position(gtk_window: &gtk::ApplicationWindow, position: OverlayPosition) {
-    let (edge, opposite_edge, margin) = match position {
-        OverlayPosition::Top => (Edge::Top, Edge::Bottom, OVERLAY_TOP_OFFSET),
-        OverlayPosition::Bottom => (Edge::Bottom, Edge::Top, OVERLAY_BOTTOM_OFFSET),
-    };
+#[cfg(target_os = "macos")]
+const FLOW_BAR_HIT_TEST_INTERVAL_MS: u64 = 50;
 
-    gtk_window.set_anchor(edge, true);
-    gtk_window.set_anchor(opposite_edge, false);
-    gtk_window.set_layer_shell_margin(edge, margin.round() as i32);
-    gtk_window.set_layer_shell_margin(opposite_edge, 0);
-}
-
-/// Configures a GTK layer surface before it is shown.
-///
-/// Tauri's normal `set_size` path calls `gtk_window_resize`, but layer surfaces
-/// derive their dimensions from GTK's size request. gtk-layer-shell documents
-/// the `set_size_request` + `resize(1, 1)` sequence for forcing a new size.
-#[cfg(target_os = "linux")]
-fn configure_layer_shell_surface(
-    gtk_window: &gtk::ApplicationWindow,
-    position: OverlayPosition,
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FlowBarHitRect {
+    x: f64,
+    y: f64,
     width: f64,
     height: f64,
-) {
-    use gtk::prelude::{GtkWindowExt, WidgetExt};
+}
 
-    configure_layer_shell_position(gtk_window, position);
+impl FlowBarHitRect {
+    fn contains(self, x: f64, y: f64) -> bool {
+        x >= self.x && y >= self.y && x < self.x + self.width && y < self.y + self.height
+    }
+}
 
-    gtk_window.set_size_request(
-        width.round().max(1.0) as i32,
-        height.round().max(1.0) as i32,
-    );
-    gtk_window.resize(1, 1);
+/// The independently implemented counterpart of Flow's native catch rectangle.
+///
+/// The renderer owns the visible pill, while this native rectangle prevents the
+/// transparent part of the tight NSPanel from swallowing clicks meant for the
+/// app underneath. Resting uses the exact painted hot area. Once the cursor has
+/// entered it, the expanded ready pill's painted hot area becomes the hysteresis
+/// region. The recovered 12 px pseudo-element extends beyond our tight Tauri
+/// panel, so the native approximation is clamped to the ready hot area instead
+/// of latching the whole transparent panel.
+fn flowbar_hit_rect(
+    state: &str,
+    dock: OverlayPosition,
+    panel_width: f64,
+    panel_height: f64,
+    already_accepting_mouse: bool,
+) -> FlowBarHitRect {
+    if state == "paste-recovery" || state == "notice" {
+        return FlowBarHitRect {
+            x: 0.0,
+            y: 0.0,
+            width: panel_width,
+            height: panel_height,
+        };
+    }
+
+    let (pill_width, pill_height, inline_padding): (f64, f64, f64) = match (state, dock) {
+        ("recording-ptt", OverlayPosition::Bottom) => (73.0, 30.0, 10.0),
+        ("recording-toggle" | "streaming", OverlayPosition::Bottom) => (102.5, 30.0, 10.0),
+        ("transcribing" | "processing", OverlayPosition::Bottom) => (98.0, 30.0, 10.0),
+        ("error", OverlayPosition::Bottom) => (91.0, 30.0, 10.0),
+        ("resting", OverlayPosition::Bottom) if already_accepting_mouse => (50.0, 30.0, 10.0),
+        ("resting", OverlayPosition::Bottom) => (40.0, 8.0, 10.0),
+        ("recording-ptt", OverlayPosition::Left | OverlayPosition::Right) => (30.0, 73.0, 6.0),
+        ("recording-toggle" | "streaming", OverlayPosition::Left | OverlayPosition::Right) => {
+            (30.0, 102.5, 6.0)
+        }
+        ("transcribing" | "processing", OverlayPosition::Left | OverlayPosition::Right) => {
+            (30.0, 98.0, 6.0)
+        }
+        ("error", OverlayPosition::Left | OverlayPosition::Right) => (30.0, 91.0, 6.0),
+        ("resting", OverlayPosition::Left | OverlayPosition::Right) if already_accepting_mouse => {
+            (30.0, 50.0, 6.0)
+        }
+        ("resting", OverlayPosition::Left | OverlayPosition::Right) => (8.0, 40.0, 6.0),
+        (_, OverlayPosition::Bottom) => (40.0, 8.0, 10.0),
+        (_, OverlayPosition::Left | OverlayPosition::Right) => (8.0, 40.0, 6.0),
+    };
+
+    let width = (pill_width + 2.0 * inline_padding).min(panel_width);
+    let height = (pill_height + 2.0 * FLOW_BAR_PADDING).min(panel_height);
+    let x = match dock {
+        OverlayPosition::Bottom => (panel_width - width) / 2.0,
+        OverlayPosition::Left => 0.0,
+        OverlayPosition::Right => panel_width - width,
+    };
+    let y = match dock {
+        OverlayPosition::Bottom => panel_height - height,
+        OverlayPosition::Left | OverlayPosition::Right => (panel_height - height) / 2.0,
+    };
+
+    FlowBarHitRect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn start_flowbar_hit_test(app_handle: &AppHandle) {
+    if FLOW_BAR_HIT_TEST_STARTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
+    let app = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(
+                FLOW_BAR_HIT_TEST_INTERVAL_MS,
+            ))
+            .await;
+
+            let Some(window) = app.get_webview_window("recording_overlay") else {
+                FLOW_BAR_ACCEPTS_MOUSE.store(false, Ordering::Relaxed);
+                continue;
+            };
+            if !window.is_visible().unwrap_or(false) {
+                continue;
+            }
+
+            // Enigo is deliberately initialized only after onboarding. Until it
+            // exists, retain normal panel mouse handling instead of making the
+            // overlay unreachable.
+            let Some((cursor_x, cursor_y)) = input::get_cursor_position(&app) else {
+                if !FLOW_BAR_ACCEPTS_MOUSE.swap(true, Ordering::AcqRel) {
+                    let _ = window.set_ignore_cursor_events(false);
+                    let _ = window.emit("flowbar-native-hover", true);
+                }
+                continue;
+            };
+            let Ok(scale) = window.scale_factor() else {
+                continue;
+            };
+            let Ok(position) = window.outer_position() else {
+                continue;
+            };
+            let Ok(size) = window.outer_size() else {
+                continue;
+            };
+            let position = position.to_logical::<f64>(scale);
+            let size = size.to_logical::<f64>(scale);
+            let local_x = cursor_x as f64 - position.x;
+            let local_y = cursor_y as f64 - position.y;
+            let was_accepting = FLOW_BAR_ACCEPTS_MOUSE.load(Ordering::Relaxed);
+            let rect = flowbar_hit_rect(
+                current_overlay_state(),
+                settings::get_settings(&app).overlay_position,
+                size.width,
+                size.height,
+                was_accepting,
+            );
+            let should_accept = rect.contains(local_x, local_y);
+
+            if should_accept != was_accepting {
+                FLOW_BAR_ACCEPTS_MOUSE.store(should_accept, Ordering::Relaxed);
+                log::debug!(
+                    "Flow Bar native hit-test: accepts_mouse={} local=({:.1}, {:.1}) rect=({:.1}, {:.1}, {:.1}, {:.1})",
+                    should_accept,
+                    local_x,
+                    local_y,
+                    rect.x,
+                    rect.y,
+                    rect.width,
+                    rect.height
+                );
+                if let Err(error) = window.set_ignore_cursor_events(!should_accept) {
+                    log::debug!("Failed to update Flow Bar mouse hit-test: {error}");
+                }
+            }
+
+            // WKWebView does not reliably synthesize mouseenter when an
+            // already-hovered click-through NSPanel starts accepting events.
+            // Flow's Electron window gets forwarded mouse movement here; our
+            // native bridge reports the same catch-rect state explicitly.
+            // Repeating the tiny boolean heartbeat also covers renderer reloads
+            // that may have missed the first transition during startup.
+            let _ = window.emit("flowbar-native-hover", should_accept);
+        }
+    });
+}
+
+fn overlay_state_code(state: &str) -> u64 {
+    match state {
+        "recording-ptt" => 1,
+        "streaming" => 2,
+        "transcribing" => 3,
+        "processing" => 4,
+        "error" => 5,
+        "recording-toggle" => 6,
+        "paste-recovery" => 7,
+        "notice" => 8,
+        _ => 0,
+    }
+}
+
+fn overlay_state_from_code(code: u64) -> &'static str {
+    match code {
+        1 => "recording-ptt",
+        2 => "streaming",
+        3 => "transcribing",
+        4 => "processing",
+        5 => "error",
+        6 => "recording-toggle",
+        7 => "paste-recovery",
+        8 => "notice",
+        _ => "resting",
+    }
+}
+
+fn current_overlay_state() -> &'static str {
+    overlay_state_from_code(CURRENT_OVERLAY_STATE.load(Ordering::Relaxed))
+}
+
+#[cfg(target_os = "macos")]
+const OVERLAY_EDGE_OFFSET: f64 = 0.0;
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+const OVERLAY_EDGE_OFFSET: f64 = 8.0;
+
+#[cfg(target_os = "linux")]
+fn update_gtk_layer_shell_anchors(overlay_window: &tauri::webview::WebviewWindow) {
+    let window_clone = overlay_window.clone();
+    let _ = overlay_window.run_on_main_thread(move || {
+        // Try to get the GTK window from the Tauri webview
+        if let Ok(gtk_window) = window_clone.gtk_window() {
+            let settings = settings::get_settings(window_clone.app_handle());
+            match settings.overlay_position {
+                OverlayPosition::Bottom => {
+                    gtk_window.set_anchor(Edge::Bottom, true);
+                    gtk_window.set_anchor(Edge::Top, false);
+                    gtk_window.set_anchor(Edge::Left, false);
+                    gtk_window.set_anchor(Edge::Right, false);
+                }
+                OverlayPosition::Left => {
+                    gtk_window.set_anchor(Edge::Left, true);
+                    gtk_window.set_anchor(Edge::Right, false);
+                    gtk_window.set_anchor(Edge::Top, false);
+                    gtk_window.set_anchor(Edge::Bottom, false);
+                }
+                OverlayPosition::Right => {
+                    gtk_window.set_anchor(Edge::Right, true);
+                    gtk_window.set_anchor(Edge::Left, false);
+                    gtk_window.set_anchor(Edge::Top, false);
+                    gtk_window.set_anchor(Edge::Bottom, false);
+                }
+            }
+        }
+    });
+}
+
+/// Returns true when the environment variable is set to a truthy value
+/// (e.g. "1", "true", "yes", "on").
+/// "0", "false", "no", "off" and empty string are treated as falsy (case-insensitive).
+/// Returns false when the variable is not set.
+#[cfg(target_os = "linux")]
+fn env_flag_enabled(name: &str) -> bool {
+    match env::var(name) {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "" | "0" | "false" | "no" | "off"
+        ),
+        Err(_) => false,
+    }
 }
 
 /// Initializes GTK layer shell for Linux overlay window
 /// Returns true if layer shell was successfully initialized, false otherwise
 #[cfg(target_os = "linux")]
 fn init_gtk_layer_shell(overlay_window: &tauri::webview::WebviewWindow) -> bool {
-    if utils::env_flag_enabled("HANDY_NO_GTK_LAYER_SHELL") {
+    if env_flag_enabled("HANDY_NO_GTK_LAYER_SHELL") {
         debug!("Skipping GTK layer shell init (HANDY_NO_GTK_LAYER_SHELL is enabled)");
         return false;
     }
@@ -152,17 +381,15 @@ fn init_gtk_layer_shell(overlay_window: &tauri::webview::WebviewWindow) -> bool 
 
     // Try to get the GTK window from the Tauri webview
     if let Ok(gtk_window) = overlay_window.gtk_window() {
+        // Initialize layer shell
         gtk_window.init_layer_shell();
         gtk_window.set_layer(Layer::Overlay);
         gtk_window.set_keyboard_mode(KeyboardMode::None);
         gtk_window.set_exclusive_zone(0);
 
-        let overlay_position = settings::get_settings(overlay_window.app_handle()).overlay_position;
-        configure_layer_shell_surface(&gtk_window, overlay_position, OVERLAY_WIDTH, OVERLAY_HEIGHT);
+        update_gtk_layer_shell_anchors(overlay_window);
 
-        let initialized = gtk_window.is_layer_window();
-        LAYER_SHELL_ACTIVE.store(initialized, Ordering::SeqCst);
-        return initialized;
+        return true;
     }
     false
 }
@@ -252,14 +479,11 @@ fn is_mouse_within_monitor(
         && mouse_y < (monitor_y + monitor_height as i32)
 }
 
-/// Returns overlay position in logical coordinates (points on macOS).
+/// Returns the docked Flow Bar position in logical coordinates.
 ///
-/// The Bottom anchor uses the macOS work area (visibleFrame) so the overlay
-/// tracks the Dock — above it when shown, at the screen edge when hidden.
-/// This relies on tauri 2.11's work_area.position.y fix (#14655), the same
-/// bug that led PR #969 to abandon work_area for full monitor bounds. Top and
-/// the other platforms keep full monitor bounds plus the fixed offsets
-/// (work_area is unreliable on Wayland; Windows' offset clears the taskbar).
+/// macOS uses the visible work area so the bar clears the Dock and menu bar.
+/// Other platforms use the monitor bounds plus a small safety inset because
+/// Wayland work-area reporting is not consistent across compositors.
 ///
 /// We must use LogicalPosition (not PhysicalPosition) because Tauri/tao
 /// converts PhysicalPosition using the scale factor of the monitor the window
@@ -272,55 +496,47 @@ fn calculate_overlay_position(
 ) -> Option<(f64, f64)> {
     let monitor = get_monitor_with_cursor(app_handle)?;
     let scale = monitor.scale_factor();
+    #[cfg(not(target_os = "macos"))]
     let monitor_x = monitor.position().x as f64 / scale;
+    #[cfg(not(target_os = "macos"))]
     let monitor_y = monitor.position().y as f64 / scale;
+    #[cfg(not(target_os = "macos"))]
     let monitor_width = monitor.size().width as f64 / scale;
+    #[cfg(not(target_os = "macos"))]
+    let monitor_height = monitor.size().height as f64 / scale;
+
+    #[cfg(target_os = "macos")]
+    let (edge_x, edge_y, edge_width, edge_height) = {
+        let work = monitor.work_area();
+        (
+            work.position.x as f64 / scale,
+            work.position.y as f64 / scale,
+            work.size.width as f64 / scale,
+            work.size.height as f64 / scale,
+        )
+    };
+    #[cfg(not(target_os = "macos"))]
+    let (edge_x, edge_y, edge_width, edge_height) =
+        (monitor_x, monitor_y, monitor_width, monitor_height);
 
     let settings = settings::get_settings(app_handle);
 
-    let x = monitor_x + (monitor_width - width) / 2.0;
-    let y = match settings.overlay_position {
-        OverlayPosition::Top => monitor_y + OVERLAY_TOP_OFFSET,
-        OverlayPosition::Bottom => {
-            // work_area.position shares monitor.position's global coordinate
-            // space, so no monitor offset is added.
-            #[cfg(target_os = "macos")]
-            let bottom = {
-                let wa = monitor.work_area();
-                (wa.position.y as f64 + wa.size.height as f64) / scale
-            };
-            #[cfg(not(target_os = "macos"))]
-            let bottom = monitor_y + monitor.size().height as f64 / scale;
-
-            bottom - height - OVERLAY_BOTTOM_OFFSET
-        }
+    let (x, y) = match settings.overlay_position {
+        OverlayPosition::Bottom => (
+            edge_x + (edge_width - width) / 2.0,
+            edge_y + edge_height - height - OVERLAY_EDGE_OFFSET,
+        ),
+        OverlayPosition::Left => (
+            edge_x + OVERLAY_EDGE_OFFSET,
+            edge_y + (edge_height - height) / 2.0,
+        ),
+        OverlayPosition::Right => (
+            edge_x + edge_width - width - OVERLAY_EDGE_OFFSET,
+            edge_y + (edge_height - height) / 2.0,
+        ),
     };
 
     Some((x, y))
-}
-
-/// Current overlay window size in logical units (points), for repositioning
-/// without assuming a fixed size (compact vs. streaming).
-#[cfg(not(target_os = "windows"))]
-fn current_overlay_logical_size(window: &tauri::webview::WebviewWindow) -> Option<(f64, f64)> {
-    let size = window.inner_size().ok()?;
-    let scale = window.scale_factor().ok()?;
-    Some((size.width as f64 / scale, size.height as f64 / scale))
-}
-
-#[cfg(target_os = "windows")]
-static WINDOWS_OVERLAY_IS_STREAMING: AtomicBool = AtomicBool::new(false);
-
-/// Windows accessibility text size (Settings > Accessibility > Text size), a
-/// separate axis from display scaling that WebView2 applies as a document zoom.
-#[cfg(target_os = "windows")]
-fn windows_text_scale_factor() -> f64 {
-    // Absent until the user moves the slider off 100%; stored as a percentage.
-    winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
-        .open_subkey(r"Software\Microsoft\Accessibility")
-        .and_then(|key| key.get_value::<u32, _>("TextScaleFactor"))
-        .map(|percent| (percent as f64 / 100.0).clamp(1.0, 2.25))
-        .unwrap_or(1.0)
 }
 
 /// Overlay rectangle in the destination monitor's physical pixels, so nothing
@@ -330,26 +546,34 @@ fn windows_overlay_bounds(
     monitor_position: PhysicalPosition<i32>,
     monitor_size: PhysicalSize<u32>,
     scale: f64,
-    text_scale: f64,
     logical_width: f64,
     logical_height: f64,
     overlay_position: OverlayPosition,
 ) -> (i32, i32, i32, i32) {
-    // Grow the window with the text scale; offsets stay DPI-only since the
-    // card sits flush against the window's screen-edge side.
-    let content_scale = scale * text_scale;
-    let width = (logical_width * content_scale).round().max(1.0) as i32;
-    let height = (logical_height * content_scale).round().max(1.0) as i32;
-    let x = (monitor_position.x as f64 + (monitor_size.width as f64 - width as f64) / 2.0).round()
-        as i32;
-    let y = match overlay_position {
-        OverlayPosition::Top => {
-            (monitor_position.y as f64 + OVERLAY_TOP_OFFSET * scale).round() as i32
-        }
-        OverlayPosition::Bottom => (monitor_position.y as f64 + monitor_size.height as f64
-            - height as f64
-            - OVERLAY_BOTTOM_OFFSET * scale)
-            .round() as i32,
+    let width = (logical_width * scale).round().max(1.0) as i32;
+    let height = (logical_height * scale).round().max(1.0) as i32;
+    let (x, y) = match overlay_position {
+        OverlayPosition::Bottom => (
+            (monitor_position.x as f64 + (monitor_size.width as f64 - width as f64) / 2.0).round()
+                as i32,
+            (monitor_position.y as f64 + monitor_size.height as f64
+                - height as f64
+                - OVERLAY_EDGE_OFFSET * scale)
+                .round() as i32,
+        ),
+        OverlayPosition::Left => (
+            (monitor_position.x as f64 + OVERLAY_EDGE_OFFSET * scale).round() as i32,
+            (monitor_position.y as f64 + (monitor_size.height as f64 - height as f64) / 2.0).round()
+                as i32,
+        ),
+        OverlayPosition::Right => (
+            (monitor_position.x as f64 + monitor_size.width as f64
+                - width as f64
+                - OVERLAY_EDGE_OFFSET * scale)
+                .round() as i32,
+            (monitor_position.y as f64 + (monitor_size.height as f64 - height as f64) / 2.0).round()
+                as i32,
+        ),
     };
 
     (x, y, width, height)
@@ -368,12 +592,10 @@ fn place_windows_overlay(
 
     let monitor = get_monitor_with_cursor(app_handle)
         .ok_or_else(|| "failed to determine the monitor containing the cursor".to_string())?;
-    let text_scale = windows_text_scale_factor();
     let (x, y, width, height) = windows_overlay_bounds(
         *monitor.position(),
         *monitor.size(),
         monitor.scale_factor(),
-        text_scale,
         logical_width,
         logical_height,
         settings::get_settings(app_handle).overlay_position,
@@ -396,13 +618,12 @@ fn place_windows_overlay(
     }
 
     log::debug!(
-        "windows overlay bounds: x={} y={} width={} height={} scale={} text_scale={}",
+        "windows overlay bounds: x={} y={} width={} height={} scale={}",
         x,
         y,
         width,
         height,
-        monitor.scale_factor(),
-        text_scale
+        monitor.scale_factor()
     );
     Ok(())
 }
@@ -410,11 +631,13 @@ fn place_windows_overlay(
 /// Creates the recording overlay window and keeps it hidden by default
 #[cfg(not(target_os = "macos"))]
 pub fn create_recording_overlay(app_handle: &AppHandle) {
+    let initial_position = settings::get_settings(app_handle).overlay_position;
+    let (initial_width, initial_height) = overlay_dimensions("resting", initial_position);
     // On Linux (Wayland), monitor detection often fails, but we don't need exact coordinates
     // for Layer Shell as we use anchors. On other platforms, we require a monitor.
     #[cfg(not(target_os = "linux"))]
     {
-        let position = calculate_overlay_position(app_handle, OVERLAY_WIDTH, OVERLAY_HEIGHT);
+        let position = calculate_overlay_position(app_handle, initial_width, initial_height);
         if position.is_none() {
             debug!("Failed to determine overlay position, not creating overlay window");
             return;
@@ -430,7 +653,7 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     )
     .title("Recording")
     .resizable(false)
-    .inner_size(OVERLAY_WIDTH, OVERLAY_HEIGHT)
+    .inner_size(initial_width, initial_height)
     .shadow(false)
     .maximizable(false)
     .minimizable(false)
@@ -461,7 +684,11 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
                 }
             }
 
-            debug!("Recording overlay window created successfully (hidden)");
+            if settings::get_settings(app_handle).overlay_style != OverlayStyle::None {
+                let _ = window.show();
+                let _ = window.emit("show-overlay", "resting");
+            }
+            debug!("Persistent Flow Bar window created successfully");
         }
         Err(e) => {
             debug!("Failed to create recording overlay window: {}", e);
@@ -469,10 +696,43 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     }
 }
 
+/// Creates a separate click-through tooltip surface. Keeping it out of the
+/// recording panel lets labels extend beyond the tight hit-tested Flow Bar
+/// without swallowing clicks intended for the app underneath.
+#[cfg(not(target_os = "macos"))]
+pub fn create_flowbar_tooltip(app_handle: &AppHandle) {
+    match WebviewWindowBuilder::new(
+        app_handle,
+        "flowbar_tooltip",
+        tauri::WebviewUrl::App("src/overlay/tooltip.html".into()),
+    )
+    .title("Flow Bar Tooltip")
+    .inner_size(TOOLTIP_WIDTH, TOOLTIP_HEIGHT)
+    .resizable(false)
+    .shadow(false)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .transparent(true)
+    .focusable(false)
+    .visible(false)
+    .build()
+    {
+        Ok(window) => {
+            if let Err(error) = window.set_ignore_cursor_events(true) {
+                debug!("Failed to make Flow Bar tooltip click-through: {error}");
+            }
+        }
+        Err(error) => debug!("Failed to create Flow Bar tooltip: {error}"),
+    }
+}
+
 /// Creates the recording overlay panel and keeps it hidden by default (macOS)
 #[cfg(target_os = "macos")]
 pub fn create_recording_overlay(app_handle: &AppHandle) {
-    if let Some((x, y)) = calculate_overlay_position(app_handle, OVERLAY_WIDTH, OVERLAY_HEIGHT) {
+    let settings = settings::get_settings(app_handle);
+    let (initial_width, initial_height) = overlay_dimensions("resting", settings.overlay_position);
+    if let Some((x, y)) = calculate_overlay_position(app_handle, initial_width, initial_height) {
         // PanelBuilder creates a Tauri window then converts it to NSPanel.
         // The window remains registered, so get_webview_window() still works.
         match PanelBuilder::<_, RecordingOverlayPanel>::new(app_handle, "recording_overlay")
@@ -481,15 +741,24 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
             .position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
             .level(PanelLevel::Status)
             .size(tauri::Size::Logical(tauri::LogicalSize {
-                width: OVERLAY_WIDTH,
-                height: OVERLAY_HEIGHT,
+                width: initial_width,
+                height: initial_height,
             }))
             .has_shadow(false)
             .transparent(true)
             .no_activate(true)
             .corner_radius(0.0)
             .style_mask(StyleMask::empty().borderless().nonactivating_panel())
-            .with_window(|w| w.decorations(false).transparent(true).focusable(false))
+            // A non-activating NSPanel normally consumes the first mouse press
+            // only to establish mouse eligibility. The persistent Flow Bar
+            // must start hands-free dictation on that very first click while
+            // leaving focus in the user's current text field.
+            .with_window(|w| {
+                w.decorations(false)
+                    .transparent(true)
+                    .focusable(false)
+                    .accept_first_mouse(true)
+            })
             .collection_behavior(
                 CollectionBehavior::new()
                     .can_join_all_spaces()
@@ -498,7 +767,15 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
             .build()
         {
             Ok(panel) => {
-                panel.hide();
+                if settings.overlay_style == OverlayStyle::None {
+                    panel.hide();
+                } else {
+                    panel.show();
+                    if let Some(window) = app_handle.get_webview_window("recording_overlay") {
+                        let _ = window.emit("show-overlay", "resting");
+                    }
+                }
+                start_flowbar_hit_test(app_handle);
             }
             Err(e) => {
                 log::error!("Failed to create recording overlay panel: {}", e);
@@ -507,16 +784,121 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub fn create_flowbar_tooltip(app_handle: &AppHandle) {
+    match PanelBuilder::<_, FlowBarTooltipPanel>::new(app_handle, "flowbar_tooltip")
+        .url(WebviewUrl::App("src/overlay/tooltip.html".into()))
+        .title("Flow Bar Tooltip")
+        .level(PanelLevel::Status)
+        .size(tauri::Size::Logical(tauri::LogicalSize {
+            width: TOOLTIP_WIDTH,
+            height: TOOLTIP_HEIGHT,
+        }))
+        .has_shadow(false)
+        .transparent(true)
+        .no_activate(true)
+        .ignores_mouse_events(true)
+        .corner_radius(0.0)
+        .style_mask(StyleMask::empty().borderless().nonactivating_panel())
+        .with_window(|window| window.decorations(false).transparent(true).focusable(false))
+        .collection_behavior(
+            CollectionBehavior::new()
+                .can_join_all_spaces()
+                .full_screen_auxiliary(),
+        )
+        .build()
+    {
+        Ok(panel) => panel.hide(),
+        Err(error) => log::error!("Failed to create Flow Bar tooltip panel: {error}"),
+    }
+}
+
+fn tooltip_position_for_bounds(
+    position: tauri::LogicalPosition<f64>,
+    size: tauri::LogicalSize<f64>,
+    dock: OverlayPosition,
+    kind: &str,
+) -> (f64, f64) {
+    let gap = if kind == "dictate" {
+        BUBBLE_TOOLTIP_GAP
+    } else {
+        ACTION_TOOLTIP_GAP
+    };
+    match dock {
+        OverlayPosition::Bottom => (
+            position.x + (size.width - TOOLTIP_WIDTH) / 2.0,
+            // The 30 px pill is bottom-pinned inside 6 px hot-area padding.
+            position.y + size.height - FLOW_BAR_PADDING - FLOW_BAR_THICKNESS - gap - TOOLTIP_HEIGHT,
+        ),
+        OverlayPosition::Left => (
+            position.x + FLOW_BAR_PADDING + FLOW_BAR_THICKNESS + gap,
+            position.y + (size.height - TOOLTIP_HEIGHT) / 2.0,
+        ),
+        OverlayPosition::Right => (
+            position.x + size.width - FLOW_BAR_PADDING - FLOW_BAR_THICKNESS - gap - TOOLTIP_WIDTH,
+            position.y + (size.height - TOOLTIP_HEIGHT) / 2.0,
+        ),
+    }
+}
+
+fn flowbar_tooltip_position(app: &AppHandle, kind: &str) -> Result<(f64, f64), String> {
+    let bar = app
+        .get_webview_window("recording_overlay")
+        .ok_or_else(|| "Flow Bar window is unavailable".to_string())?;
+    let scale = bar.scale_factor().map_err(|error| error.to_string())?;
+    let position = bar
+        .outer_position()
+        .map_err(|error| error.to_string())?
+        .to_logical::<f64>(scale);
+    let size = bar
+        .outer_size()
+        .map_err(|error| error.to_string())?
+        .to_logical::<f64>(scale);
+
+    Ok(tooltip_position_for_bounds(
+        position,
+        size,
+        settings::get_settings(app).overlay_position,
+        kind,
+    ))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn show_flowbar_tooltip(app: AppHandle, kind: String) -> Result<(), String> {
+    if kind != "dictate" && kind != "cancel" && kind != "finish" {
+        return Err("Unknown Flow Bar tooltip".to_string());
+    }
+    let tooltip = app
+        .get_webview_window("flowbar_tooltip")
+        .ok_or_else(|| "Flow Bar tooltip is unavailable".to_string())?;
+    let (x, y) = flowbar_tooltip_position(&app, &kind)?;
+    tooltip
+        .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
+        .map_err(|error| error.to_string())?;
+    tooltip
+        .emit("flowbar-tooltip", kind)
+        .map_err(|error| error.to_string())?;
+    tooltip.show().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn hide_flowbar_tooltip(app: AppHandle) -> Result<(), String> {
+    if let Some(tooltip) = app.get_webview_window("flowbar_tooltip") {
+        tooltip.hide().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 fn show_overlay_state(app_handle: &AppHandle, state: &str) {
     // Whether the overlay shows at all is governed by overlay_style; position
-    // only chooses Top vs Bottom placement. Checked here (off the main thread)
+    // only chooses its dock edge. Checked here (off the main thread)
     // so the common overlay-disabled case never pays for a main-thread hop.
     let settings = settings::get_settings(app_handle);
     if settings.overlay_style == OverlayStyle::None {
         return;
     }
-    OVERLAY_SESSION_SHOWING.store(true, Ordering::SeqCst);
-    OVERLAY_SESSION_LIVE.store(is_live_state(state), Ordering::SeqCst);
 
     // The rest queries monitors and the cursor and mutates window geometry. On
     // Linux the monitor/cursor lookups hit GDK/Xlib on the process's shared X11
@@ -532,111 +914,112 @@ fn show_overlay_state(app_handle: &AppHandle, state: &str) {
 }
 
 fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
-    // Size the overlay for this state (compact vs. streaming), then position it.
-    let (width, height) = overlay_dimensions(state);
+    // Keep the previous native bounds for the 100 ms active -> resting morph.
+    // Shrinking the window before the CSS transition completes clips the pill.
+    OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst);
+    OVERLAY_SESSION_SHOWING.store(is_session_state(state), Ordering::SeqCst);
+    let next_state_code = overlay_state_code(state);
+    let previous_state_code = CURRENT_OVERLAY_STATE.swap(next_state_code, Ordering::Relaxed);
+    let should_delay_collapse = next_state_code == 0 && previous_state_code != 0;
+    let geometry_state = if should_delay_collapse {
+        overlay_state_from_code(previous_state_code)
+    } else {
+        state
+    };
+    let position = settings::get_settings(app_handle).overlay_position;
+    let (width, height) = overlay_dimensions(geometry_state, position);
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
-        // Invalidate any delayed hide still in flight from a previous session
-        // (see `hide_recording_overlay`).
-        OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst);
-
         #[cfg(target_os = "linux")]
-        let shown_with_layer_shell = if LAYER_SHELL_ACTIVE.load(Ordering::SeqCst) {
-            let position = settings::get_settings(app_handle).overlay_position;
-            match overlay_window.gtk_window() {
-                Ok(gtk_window) => {
-                    configure_layer_shell_surface(&gtk_window, position, width, height)
-                }
-                Err(error) => log::error!("Failed to access GTK overlay window: {error}"),
-            }
-            let _ = overlay_window.show();
-            true
-        } else {
-            false
-        };
-        #[cfg(not(target_os = "linux"))]
-        let shown_with_layer_shell = false;
+        update_gtk_layer_shell_anchors(&overlay_window);
 
-        if !shown_with_layer_shell {
-            let size_started = std::time::Instant::now();
-            #[cfg(not(target_os = "windows"))]
-            let _ =
-                overlay_window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
-            #[cfg(target_os = "windows")]
-            WINDOWS_OVERLAY_IS_STREAMING.store(is_live_state(state), Ordering::Relaxed);
-            let size_elapsed = size_started.elapsed();
+        let size_started = std::time::Instant::now();
+        #[cfg(not(target_os = "windows"))]
+        let _ = overlay_window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
+        let size_elapsed = size_started.elapsed();
 
-            let pos_started = std::time::Instant::now();
-            #[cfg(not(target_os = "windows"))]
-            let set_pos_elapsed =
-                if let Some((x, y)) = calculate_overlay_position(app_handle, width, height) {
-                    let set_pos_started = std::time::Instant::now();
-                    let _ = overlay_window
-                        .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
-                    set_pos_started.elapsed()
-                } else {
-                    std::time::Duration::ZERO
-                };
-            #[cfg(target_os = "windows")]
-            let set_pos_elapsed = {
+        let pos_started = std::time::Instant::now();
+        #[cfg(not(target_os = "windows"))]
+        let set_pos_elapsed =
+            if let Some((x, y)) = calculate_overlay_position(app_handle, width, height) {
                 let set_pos_started = std::time::Instant::now();
-                if let Err(error) =
-                    place_windows_overlay(app_handle, &overlay_window, width, height)
-                {
-                    log::error!("Failed to place recording overlay: {error}");
-                }
+                let _ = overlay_window
+                    .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
                 set_pos_started.elapsed()
+            } else {
+                std::time::Duration::ZERO
             };
-            let pos_calc_elapsed = pos_started.elapsed() - set_pos_elapsed;
-
-            let show_started = std::time::Instant::now();
-            let _ = overlay_window.show();
-            let show_elapsed = show_started.elapsed();
-
-            // On Windows, aggressively re-assert "topmost" in the native Z-order after showing
-            #[cfg(target_os = "windows")]
-            force_overlay_topmost(&overlay_window);
-
-            // Re-assert bounds after show(): the pre-show move crosses the DPI
-            // boundary, and tao's WM_DPICHANGED reflow clobbers the first placement.
-            #[cfg(target_os = "windows")]
+        #[cfg(target_os = "windows")]
+        let set_pos_elapsed = {
+            let set_pos_started = std::time::Instant::now();
             if let Err(error) = place_windows_overlay(app_handle, &overlay_window, width, height) {
-                log::error!("Failed to re-assert recording overlay position: {error}");
+                log::error!("Failed to place recording overlay: {error}");
             }
+            set_pos_started.elapsed()
+        };
+        let pos_calc_elapsed = pos_started.elapsed() - set_pos_elapsed;
 
-            log::debug!(
-                "overlay '{}': set_size={:?} pos_calc={:?} set_pos={:?} show={:?}",
-                state,
-                size_elapsed,
-                pos_calc_elapsed,
-                set_pos_elapsed,
-                show_elapsed
-            );
+        let show_started = std::time::Instant::now();
+        let _ = overlay_window.show();
+        let show_elapsed = show_started.elapsed();
+
+        // On Windows, aggressively re-assert "topmost" in the native Z-order after showing
+        #[cfg(target_os = "windows")]
+        force_overlay_topmost(&overlay_window);
+
+        // Re-assert bounds after show(): the pre-show move crosses the DPI
+        // boundary, and tao's WM_DPICHANGED reflow clobbers the first placement.
+        #[cfg(target_os = "windows")]
+        if let Err(error) = place_windows_overlay(app_handle, &overlay_window, width, height) {
+            log::error!("Failed to re-assert recording overlay position: {error}");
         }
 
         let _ = overlay_window.emit("show-overlay", state);
-    }
-}
+        log::debug!(
+            "overlay '{}': set_size={:?} pos_calc={:?} set_pos={:?} show={:?}",
+            state,
+            size_elapsed,
+            pos_calc_elapsed,
+            set_pos_elapsed,
+            show_elapsed
+        );
 
-/// Notify the visible recording overlay that the input stream has delivered its
-/// first sample chunk. Audio feedback uses the same backend readiness signal,
-/// but this targeted event is skipped when overlays are disabled.
-pub fn emit_recording_ready(app_handle: &AppHandle) {
-    if !OVERLAY_ENABLED.load(Ordering::Relaxed) {
-        return;
+        if should_delay_collapse {
+            let handle = app_handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(
+                    FLOW_BAR_MORPH_COLLAPSE_DELAY_MS,
+                ));
+                if CURRENT_OVERLAY_STATE.load(Ordering::Relaxed) != 0 {
+                    return;
+                }
+                let main_handle = handle.clone();
+                let _ = handle.run_on_main_thread(move || {
+                    if CURRENT_OVERLAY_STATE.load(Ordering::Relaxed) == 0 {
+                        update_overlay_position_on_main(&main_handle);
+                    }
+                });
+            });
+        }
     }
-
-    // Showing the overlay is also queued onto the main thread. Queue readiness
-    // there as well so a very fast always-on stream cannot overtake show-overlay
-    // and then get reset back to the arming state by the frontend.
-    let handle = app_handle.clone();
-    let _ = app_handle.run_on_main_thread(move || {
-        let _ = handle.emit_to("recording_overlay", "recording-ready", ());
-    });
 }
 
 /// Shows the recording overlay window with fade-in animation
 pub fn show_recording_overlay(app_handle: &AppHandle) {
-    show_overlay_state(app_handle, "recording");
+    let state = if RECORDING_PUSH_TO_TALK.load(Ordering::Relaxed) {
+        "recording-ptt"
+    } else {
+        "recording-toggle"
+    };
+    show_overlay_state(app_handle, state);
+}
+
+// Set by the serial transcription coordinator immediately before an action
+// starts, so the renderer receives the actual input mode rather than guessing
+// from shortcut names.
+static RECORDING_PUSH_TO_TALK: AtomicBool = AtomicBool::new(false);
+
+pub fn set_recording_push_to_talk(push_to_talk: bool) {
+    RECORDING_PUSH_TO_TALK.store(push_to_talk, Ordering::Relaxed);
 }
 
 /// Shows the larger streaming overlay that displays live transcription text
@@ -654,45 +1037,14 @@ pub fn show_processing_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "processing");
 }
 
-/// Shows `notice` in place of the session's overlay and fades it after
-/// [`NOTICE_HOLD`] unless something newer has shown. With the overlay off, it
-/// still hides the session's overlay in case the setting changed mid-session.
-pub fn show_overlay_notice(app_handle: &AppHandle, notice: &Notice) {
-    if !OVERLAY_ENABLED.load(Ordering::Relaxed) {
-        hide_recording_overlay(app_handle);
-        return;
+/// Returns the persistent Flow Bar to its compact idle state. If overlays are
+/// disabled, the native window is hidden instead.
+pub fn show_idle_overlay(app_handle: &AppHandle) {
+    if settings::get_settings(app_handle).overlay_style == OverlayStyle::None {
+        hide_overlay_window(app_handle);
+    } else {
+        show_overlay_state(app_handle, "resting");
     }
-    OVERLAY_SESSION_SHOWING.store(false, Ordering::SeqCst);
-
-    let state = notice_state(OVERLAY_SESSION_LIVE.load(Ordering::SeqCst));
-    let handle = app_handle.clone();
-    let notice = notice.clone();
-    // On the main thread for the same reason as show_overlay_state.
-    let _ = app_handle.run_on_main_thread(move || {
-        let _ = handle.emit_to("recording_overlay", "overlay-notice", notice);
-        show_overlay_state_on_main(&handle, state);
-
-        let generation = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
-        OVERLAY_NOTICE_GENERATION.store(generation, Ordering::SeqCst);
-        std::thread::spawn(move || {
-            std::thread::sleep(NOTICE_HOLD);
-            if OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) == generation {
-                hide_recording_overlay(&handle);
-            }
-        });
-    });
-}
-
-/// Hides the notice early, unless a new session has replaced it.
-pub fn dismiss_overlay_notice(app_handle: &AppHandle) {
-    let shown = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
-    if OVERLAY_NOTICE_GENERATION.load(Ordering::SeqCst) == shown {
-        hide_recording_overlay(app_handle);
-    }
-}
-
-pub fn is_session_showing() -> bool {
-    OVERLAY_SESSION_SHOWING.load(Ordering::SeqCst)
 }
 
 /// Updates the overlay window position based on current settings
@@ -703,26 +1055,173 @@ pub fn update_overlay_position(app_handle: &AppHandle) {
     let _ = app_handle.run_on_main_thread(move || update_overlay_position_on_main(&handle));
 }
 
+/// Expands the existing transparent panel to the cursor's monitor while the
+/// user drags the Flow Bar. The renderer owns the ghost and drop targets.
+#[tauri::command]
+#[specta::specta]
+pub fn begin_overlay_drag(app: AppHandle) -> Result<(), String> {
+    let monitor = get_monitor_with_cursor(&app)
+        .ok_or_else(|| "failed to determine the monitor containing the cursor".to_string())?;
+    let scale = monitor.scale_factor();
+    let x = monitor.position().x as f64 / scale;
+    let y = monitor.position().y as f64 / scale;
+    let width = monitor.size().width as f64 / scale;
+    let height = monitor.size().height as f64 / scale;
+    let window = app
+        .get_webview_window("recording_overlay")
+        .ok_or_else(|| "Flow Bar window is unavailable".to_string())?;
+
+    window
+        .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
+        .map_err(|error| error.to_string())?;
+    window
+        .set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }))
+        .map_err(|error| error.to_string())?;
+    let _ = window.show();
+    Ok(())
+}
+
+/// Persists the selected edge and collapses the drag surface back around the
+/// painted Flow Bar.
+#[tauri::command]
+#[specta::specta]
+pub fn finish_overlay_drag(app: AppHandle, edge: String) -> Result<(), String> {
+    let position = match edge.as_str() {
+        "bottom" => OverlayPosition::Bottom,
+        "left" => OverlayPosition::Left,
+        "right" => OverlayPosition::Right,
+        _ => return Err(format!("invalid Flow Bar edge: {edge}")),
+    };
+
+    let mut app_settings = settings::get_settings(&app);
+    app_settings.overlay_position = position;
+    settings::write_settings(&app, app_settings);
+
+    let state = current_overlay_state();
+    let (width, height) = overlay_dimensions(state, position);
+    let window = app
+        .get_webview_window("recording_overlay")
+        .ok_or_else(|| "Flow Bar window is unavailable".to_string())?;
+    window
+        .set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }))
+        .map_err(|error| error.to_string())?;
+    if let Some((x, y)) = calculate_overlay_position(&app, width, height) {
+        window
+            .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
+            .map_err(|error| error.to_string())?;
+    }
+    let _ = window.emit("overlay-position-changed", edge);
+    Ok(())
+}
+
+/// Mirrors the main dictation shortcut when the expanded idle bar is clicked.
+#[tauri::command]
+#[specta::specta]
+pub fn toggle_overlay_dictation(app: AppHandle) {
+    if let Some(coordinator) = app.try_state::<crate::TranscriptionCoordinator>() {
+        coordinator.toggle_from_overlay();
+    } else {
+        log::warn!("TranscriptionCoordinator not initialized");
+    }
+}
+
+/// Shows a local recovery card when the target application did not consume the
+/// transcript. The text is sent only to the overlay renderer and is not logged.
+pub fn show_paste_recovery_overlay(app_handle: &AppHandle, text: String) {
+    if text.trim().is_empty() {
+        show_idle_overlay(app_handle);
+        return;
+    }
+
+    show_overlay_state(app_handle, "paste-recovery");
+    if let Some(window) = app_handle.get_webview_window("recording_overlay") {
+        let _ = window.emit("paste-recovery", text);
+    }
+}
+
+/// How long a notice holds before the bar returns to resting.
+const NOTICE_HOLD: Duration = Duration::from_secs(4);
+
+/// Bumped on every state change; a delayed notice fade only fires if nothing
+/// newer has shown since.
+static OVERLAY_SHOW_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// The show generation of the latest notice; it is on screen while this matches.
+static OVERLAY_NOTICE_GENERATION: AtomicU64 = AtomicU64::new(u64::MAX);
+/// Set while the bar shows a recording or transcribing session.
+static OVERLAY_SESSION_SHOWING: AtomicBool = AtomicBool::new(false);
+
+fn is_session_state(state: &str) -> bool {
+    matches!(
+        state,
+        "recording-ptt" | "recording-toggle" | "streaming" | "transcribing" | "processing"
+    )
+}
+
+pub fn is_session_showing() -> bool {
+    OVERLAY_SESSION_SHOWING.load(Ordering::SeqCst)
+}
+
+/// Notify the bar that the input stream delivered its first sample chunk.
+pub fn emit_recording_ready(app_handle: &AppHandle) {
+    if !OVERLAY_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    // Queued on the main thread like show-overlay, so it cannot overtake it.
+    let handle = app_handle.clone();
+    let _ = app_handle.run_on_main_thread(move || {
+        let _ = handle.emit_to("recording_overlay", "recording-ready", ());
+    });
+}
+
+/// Morphs the bar into `notice` and returns it to resting after [`NOTICE_HOLD`]
+/// unless something newer has shown.
+pub fn show_overlay_notice(app_handle: &AppHandle, notice: &Notice) {
+    if !OVERLAY_ENABLED.load(Ordering::Relaxed) {
+        hide_recording_overlay(app_handle);
+        return;
+    }
+    let handle = app_handle.clone();
+    let notice = notice.clone();
+    let _ = app_handle.run_on_main_thread(move || {
+        let _ = handle.emit_to("recording_overlay", "overlay-notice", notice);
+        show_overlay_state_on_main(&handle, "notice");
+        let generation = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
+        OVERLAY_NOTICE_GENERATION.store(generation, Ordering::SeqCst);
+        std::thread::spawn(move || {
+            std::thread::sleep(NOTICE_HOLD);
+            if OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) == generation {
+                show_idle_overlay(&handle);
+            }
+        });
+    });
+}
+
+/// Ends the notice early, unless a new session has replaced it.
+pub fn dismiss_overlay_notice(app_handle: &AppHandle) {
+    let shown = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
+    if OVERLAY_NOTICE_GENERATION.load(Ordering::SeqCst) == shown {
+        show_idle_overlay(app_handle);
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn dismiss_overlay_card(app: AppHandle) {
+    show_idle_overlay(&app);
+}
+
 fn update_overlay_position_on_main(app_handle: &AppHandle) {
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
         #[cfg(target_os = "linux")]
-        if LAYER_SHELL_ACTIVE.load(Ordering::SeqCst) {
-            let position = settings::get_settings(app_handle).overlay_position;
-            match overlay_window.gtk_window() {
-                Ok(gtk_window) => configure_layer_shell_position(&gtk_window, position),
-                Err(error) => log::error!("Failed to access GTK overlay window: {error}"),
-            }
-            return;
+        {
+            update_gtk_layer_shell_anchors(&overlay_window);
         }
 
         #[cfg(target_os = "windows")]
         {
-            let state = if WINDOWS_OVERLAY_IS_STREAMING.load(Ordering::Relaxed) {
-                "streaming"
-            } else {
-                "recording"
-            };
-            let (width, height) = overlay_dimensions(state);
+            let state = current_overlay_state();
+            let position = settings::get_settings(app_handle).overlay_position;
+            let (width, height) = overlay_dimensions(state, position);
             if let Err(error) = place_windows_overlay(app_handle, &overlay_window, width, height) {
                 log::error!("Failed to update recording overlay position: {error}");
             }
@@ -730,10 +1229,10 @@ fn update_overlay_position_on_main(app_handle: &AppHandle) {
 
         #[cfg(not(target_os = "windows"))]
         {
-            // Use the window's current size so centering stays correct whether the
-            // overlay is in compact or streaming layout.
-            let (width, height) = current_overlay_logical_size(&overlay_window)
-                .unwrap_or((OVERLAY_WIDTH, OVERLAY_HEIGHT));
+            let position = settings::get_settings(app_handle).overlay_position;
+            let (width, height) = overlay_dimensions(current_overlay_state(), position);
+            let _ =
+                overlay_window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
             if let Some((x, y)) = calculate_overlay_position(app_handle, width, height) {
                 let _ = overlay_window
                     .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
@@ -742,49 +1241,17 @@ fn update_overlay_position_on_main(app_handle: &AppHandle) {
     }
 }
 
-/// Generation counter bumped every time the overlay is shown. The delayed
-/// `hide()` below only unmaps the window if no show happened after it was
-/// scheduled, so a hide left over from a finished transcription can never
-/// take down the overlay of a session that started in the meantime — e.g. a
-/// press the coordinator remembered while the pipeline was busy and started
-/// the instant it drained, well inside the 300 ms hide delay.
-static OVERLAY_SHOW_GENERATION: AtomicU64 = AtomicU64::new(0);
-
-/// The show generation of the latest notice; it's on screen while this matches
-/// `OVERLAY_SHOW_GENERATION`.
-static OVERLAY_NOTICE_GENERATION: AtomicU64 = AtomicU64::new(u64::MAX);
-
-/// Set while the overlay shows a recording or transcribing session.
-static OVERLAY_SESSION_SHOWING: AtomicBool = AtomicBool::new(false);
-
-/// Whether the overlay's current session uses the Live window. The style alone
-/// can't say: a model that doesn't stream gets the compact pill under Live too.
-static OVERLAY_SESSION_LIVE: AtomicBool = AtomicBool::new(false);
-
-/// Hides the recording overlay window with fade-out animation
-pub fn hide_recording_overlay(app_handle: &AppHandle) {
-    OVERLAY_SESSION_SHOWING.store(false, Ordering::SeqCst);
-    OVERLAY_SESSION_LIVE.store(false, Ordering::SeqCst);
-    // Always hide the overlay regardless of settings - if setting was changed while recording,
-    // we still want to hide it properly
+fn hide_overlay_window(app_handle: &AppHandle) {
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
-        // Snapshot before doing anything observable, so any show that lands
-        // after this point invalidates the delayed hide below.
-        let scheduled_at = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
-        // Emit event to trigger fade-out animation
         let _ = overlay_window.emit("hide-overlay", ());
-        // Hide the window after a short delay to allow animation to complete,
-        // unless a newer session has shown the overlay again by then.
-        let window_clone = overlay_window.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            if OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) != scheduled_at {
-                log::debug!("Skipping stale overlay hide: a newer session is showing the overlay");
-                return;
-            }
-            let _ = window_clone.hide();
-        });
+        let _ = overlay_window.hide();
     }
+}
+
+/// Ends a recording/transcription visual by morphing back to the persistent
+/// resting bar. `None` remains the only setting that truly hides the window.
+pub fn hide_recording_overlay(app_handle: &AppHandle) {
+    show_idle_overlay(app_handle);
 }
 
 // Cached "overlay is enabled" flag, kept in sync with overlay_style. Avoids
@@ -792,11 +1259,6 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
 // Defaults to false so the audio path doesn't emit until lib.rs::setup
 // populates the cache from initial settings.
 static OVERLAY_ENABLED: AtomicBool = AtomicBool::new(false);
-
-/// Tracks whether gtk-layer-shell was successfully initialized (Linux only).
-/// Used to skip layer-shell calls when the window is a regular fallback.
-#[cfg(target_os = "linux")]
-static LAYER_SHELL_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// Update the cached overlay-enabled flag. Called from `lib.rs` at
 /// startup after settings load, and from `change_overlay_style_setting`
@@ -849,14 +1311,179 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_notice_keeps_the_size_of_its_session() {
-        for (session, live) in [("streaming", true), ("recording", false)] {
-            assert_eq!(
-                overlay_dimensions(notice_state(is_live_state(session))),
-                overlay_dimensions(session)
-            );
-            assert_eq!(is_live_state(session), live);
+    fn overlay_geometry_tracks_state_and_dock_edge() {
+        assert_eq!(
+            overlay_dimensions("resting", OverlayPosition::Bottom),
+            (BOTTOM_REST_WIDTH, BOTTOM_HEIGHT)
+        );
+        assert_eq!(
+            overlay_dimensions("recording-toggle", OverlayPosition::Left),
+            (SIDE_ACTIVE_WIDTH, SIDE_ACTIVE_HEIGHT)
+        );
+        assert_eq!(
+            overlay_dimensions("processing", OverlayPosition::Right),
+            (SIDE_WORK_WIDTH, SIDE_WORK_HEIGHT)
+        );
+        assert_eq!(
+            overlay_dimensions("streaming", OverlayPosition::Bottom),
+            (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
+        );
+        assert_eq!(
+            overlay_dimensions("paste-recovery", OverlayPosition::Right),
+            (RECOVERY_WIDTH, RECOVERY_HEIGHT)
+        );
+        assert_eq!(
+            overlay_dimensions("notice", OverlayPosition::Bottom),
+            (NOTICE_WIDTH, NOTICE_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn overlay_state_codes_round_trip_to_geometry_states() {
+        for state in [
+            "resting",
+            "recording-ptt",
+            "recording-toggle",
+            "streaming",
+            "transcribing",
+            "processing",
+            "error",
+            "paste-recovery",
+            "notice",
+        ] {
+            assert_eq!(overlay_state_from_code(overlay_state_code(state)), state);
         }
+    }
+
+    #[test]
+    fn tooltip_geometry_uses_flow_offsets_from_the_visible_pill() {
+        let origin = tauri::LogicalPosition::new(100.0, 200.0);
+
+        assert_eq!(
+            tooltip_position_for_bounds(
+                origin,
+                tauri::LogicalSize::new(BOTTOM_ACTIVE_WIDTH, BOTTOM_HEIGHT),
+                OverlayPosition::Bottom,
+                "finish",
+            ),
+            (78.0, 174.0)
+        );
+        assert_eq!(
+            tooltip_position_for_bounds(
+                origin,
+                tauri::LogicalSize::new(SIDE_ACTIVE_WIDTH, SIDE_ACTIVE_HEIGHT),
+                OverlayPosition::Left,
+                "cancel",
+            ),
+            (146.0, 249.0)
+        );
+        assert_eq!(
+            tooltip_position_for_bounds(
+                origin,
+                tauri::LogicalSize::new(SIDE_REST_WIDTH, SIDE_REST_HEIGHT),
+                OverlayPosition::Right,
+                "dictate",
+            ),
+            (-62.0, 221.0)
+        );
+    }
+
+    #[test]
+    fn resting_hit_rect_is_tight_until_hover_then_adds_ready_hysteresis() {
+        assert_eq!(
+            flowbar_hit_rect(
+                "resting",
+                OverlayPosition::Right,
+                SIDE_REST_WIDTH,
+                SIDE_REST_HEIGHT,
+                false,
+            ),
+            FlowBarHitRect {
+                x: 34.0,
+                y: 12.0,
+                width: 20.0,
+                height: 52.0,
+            }
+        );
+        assert_eq!(
+            flowbar_hit_rect(
+                "resting",
+                OverlayPosition::Bottom,
+                BOTTOM_REST_WIDTH,
+                BOTTOM_HEIGHT,
+                false,
+            ),
+            FlowBarHitRect {
+                x: 8.0,
+                y: 34.0,
+                width: 60.0,
+                height: 20.0,
+            }
+        );
+        assert_eq!(
+            flowbar_hit_rect(
+                "resting",
+                OverlayPosition::Right,
+                SIDE_REST_WIDTH,
+                SIDE_REST_HEIGHT,
+                true,
+            ),
+            FlowBarHitRect {
+                x: 12.0,
+                y: 7.0,
+                width: 42.0,
+                height: 62.0,
+            }
+        );
+    }
+
+    #[test]
+    fn active_hit_rect_tracks_rotated_side_pills() {
+        assert_eq!(
+            flowbar_hit_rect(
+                "recording-toggle",
+                OverlayPosition::Right,
+                SIDE_ACTIVE_WIDTH,
+                SIDE_ACTIVE_HEIGHT,
+                true,
+            ),
+            FlowBarHitRect {
+                x: 12.0,
+                y: 8.75,
+                width: 42.0,
+                height: 114.5,
+            }
+        );
+        assert_eq!(
+            flowbar_hit_rect(
+                "paste-recovery",
+                OverlayPosition::Bottom,
+                RECOVERY_WIDTH,
+                RECOVERY_HEIGHT,
+                false,
+            ),
+            FlowBarHitRect {
+                x: 0.0,
+                y: 0.0,
+                width: RECOVERY_WIDTH,
+                height: RECOVERY_HEIGHT,
+            }
+        );
+        assert_eq!(
+            flowbar_hit_rect(
+                "processing",
+                OverlayPosition::Left,
+                SIDE_WORK_WIDTH,
+                SIDE_WORK_HEIGHT,
+                true,
+            ),
+            FlowBarHitRect {
+                x: 0.0,
+                y: 11.0,
+                width: 42.0,
+                height: 110.0,
+            }
+        );
     }
 
     #[test]
@@ -908,24 +1535,22 @@ mod tests {
                 monitor_position,
                 monitor_size,
                 1.5,
-                1.0,
-                OVERLAY_WIDTH,
-                OVERLAY_HEIGHT,
+                BOTTOM_REST_WIDTH,
+                BOTTOM_HEIGHT,
                 OverlayPosition::Bottom,
             ),
-            (3641, 2025, 399, 75)
+            (3783, 2067, 114, 81)
         );
         assert_eq!(
             windows_overlay_bounds(
                 monitor_position,
                 monitor_size,
                 1.5,
-                1.0,
-                OVERLAY_WIDTH,
-                OVERLAY_HEIGHT,
-                OverlayPosition::Top,
+                SIDE_REST_WIDTH,
+                SIDE_REST_HEIGHT,
+                OverlayPosition::Left,
             ),
-            (3641, 6, 399, 75)
+            (1932, 1023, 81, 114)
         );
     }
 
@@ -937,45 +1562,11 @@ mod tests {
                 PhysicalPosition::new(-2560, -200),
                 PhysicalSize::new(2560, 1440),
                 1.25,
-                1.0,
                 OVERLAY_STREAM_WIDTH,
                 OVERLAY_STREAM_HEIGHT,
                 OverlayPosition::Bottom,
             ),
-            (-1530, 1040, 500, 150)
+            (-1530, 1080, 500, 150)
         );
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn windows_overlay_bounds_grow_with_text_scale_without_moving_the_anchored_edge() {
-        let monitor_position = PhysicalPosition::new(-2560, -200);
-        let monitor_size = PhysicalSize::new(2560, 1440);
-
-        let (x, y, width, height) = windows_overlay_bounds(
-            monitor_position,
-            monitor_size,
-            1.25,
-            1.1,
-            OVERLAY_STREAM_WIDTH,
-            OVERLAY_STREAM_HEIGHT,
-            OverlayPosition::Bottom,
-        );
-        // 400x120 logical at 1.25 DPI x 1.1 text, still centered horizontally.
-        assert_eq!((x, y, width, height), (-1555, 1025, 550, 165));
-        // Bottom edge unchanged from the 1.0 case above (1040 + 150).
-        assert_eq!(y + height, 1190);
-
-        let (_, top_y, _, _) = windows_overlay_bounds(
-            monitor_position,
-            monitor_size,
-            1.25,
-            1.1,
-            OVERLAY_STREAM_WIDTH,
-            OVERLAY_STREAM_HEIGHT,
-            OverlayPosition::Top,
-        );
-        // Top offset rides the DPI scale alone, so the top edge doesn't move.
-        assert_eq!(top_y, -195);
     }
 }

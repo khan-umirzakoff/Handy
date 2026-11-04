@@ -236,10 +236,23 @@ fn spawn_waiter(pending: Arc<Mutex<MacPending>>, app_handle: AppHandle) {
             info!("[reliable-paste] settling: no read within timeout, restoring anyway");
         }
 
+        // A successful key injection only proves that macOS accepted the
+        // shortcut. The pasteboard read receipt is what proves that an editor
+        // actually consumed the transcript. Preserve the text for a local
+        // recovery card before the transaction restores the old clipboard.
+        let recovery_text = if receipt_seen {
+            None
+        } else {
+            pending.lock().ok().map(|p| p.transcript.clone())
+        };
+
         let pending_for_finish = pending.clone();
         let app_for_finish = app_handle.clone();
         let _ = app_handle.run_on_main_thread(move || {
             settle(&pending_for_finish, &app_for_finish, None);
+            if let Some(text) = recovery_text {
+                crate::overlay::show_paste_recovery_overlay(&app_for_finish, text);
+            }
             if let Ok(mut slot) = PENDING.lock() {
                 let is_us = slot
                     .as_ref()

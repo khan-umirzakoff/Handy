@@ -1,4 +1,5 @@
 use crate::actions::ACTION_MAP;
+use crate::audio_feedback::{play_feedback_sound, SoundType};
 use crate::managers::audio::AudioRecordingManager;
 use crate::settings::ShortcutActivation;
 use log::{debug, error, warn};
@@ -13,6 +14,13 @@ use tauri_specta::Event;
 
 const DEBOUNCE: Duration = Duration::from_millis(30);
 const RELEASE_GRACE: Duration = Duration::from_millis(50);
+/// Hold-or-toggle: a press this soon after a tap started the recording is the
+/// second half of a double-tap (Wispr Flow's hands-free gesture, 500 ms), so it
+/// keeps the lock instead of stopping a half-second take.
+/// Evidence: `.re/flow-desktop/pretty/main/index.js:252218` (500 ms debounce).
+const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(500);
+/// Hotkey label for dictations started by clicking the bar.
+const BAR_SOURCE: &str = "Shivir bar";
 
 /// Recording phase events for windows that follow along (onboarding's Try it).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -199,8 +207,12 @@ enum Effect {
 /// Commands processed sequentially by the coordinator thread.
 enum Command {
     Input(InputEvent),
-    Cancel { recording_was_active: bool },
+    Cancel {
+        recording_was_active: bool,
+    },
     ProcessingFinished,
+    /// A click on the bar: start hands-free, or finish the current take.
+    BarToggle,
 }
 
 /// Decide whether a key-up should be deferred (so auto-repeat can cancel it)
@@ -392,6 +404,16 @@ impl CoordinatorState {
                     // every press ends it, even if the recording began under a
                     // hold mode (the setting changed mid-recording) — otherwise
                     // nothing but Escape could stop it.
+                    if input.mode == ShortcutActivation::HoldOrToggle
+                        && self.is_recording_locked()
+                        && self
+                            .hold
+                            .as_ref()
+                            .is_some_and(|h| now.duration_since(h.pressed_at) < DOUBLE_TAP_WINDOW)
+                    {
+                        debug!("Double-tap for '{}': staying locked", input.binding_id);
+                        return None;
+                    }
                     if self.is_locked() || input.mode == ShortcutActivation::Toggle {
                         return Some(self.begin_processing(input.binding_id, input.hotkey_string));
                     }
@@ -492,6 +514,28 @@ impl CoordinatorState {
         None
     }
 
+    /// A bar click starts a locked (hands-free) take of the main binding, or
+    /// finishes whichever transcribe binding is recording.
+    fn on_bar_toggle(&mut self, now: Instant) -> Option<Effect> {
+        match &self.stage {
+            Stage::Idle => Some(self.begin_recording(
+                "transcribe".to_string(),
+                BAR_SOURCE.to_string(),
+                now,
+                true,
+            )),
+            Stage::Recording(id) => {
+                let id = id.clone();
+                self.pending_release = None;
+                Some(self.begin_processing(id, BAR_SOURCE.to_string()))
+            }
+            Stage::Processing => {
+                debug!("Ignoring bar click: pipeline busy");
+                None
+            }
+        }
+    }
+
     fn on_cancel(&mut self, recording_was_active: bool) {
         self.pending_release = None;
         // An explicit cancel abandons any remembered start too — the user
@@ -590,7 +634,7 @@ impl TranscriptionCoordinator {
                                     run_effect(&app, &mut state, effect);
                                 }
                                 if !was_locked && state.is_recording_locked() {
-                                    emit_recording_phase(&app, RecordingPhase::Locked);
+                                    on_locked(&app, true);
                                 }
                                 continue;
                             }
@@ -604,6 +648,7 @@ impl TranscriptionCoordinator {
                     };
 
                     let was_locked = state.is_recording_locked();
+                    let was_recording = matches!(state.stage, Stage::Recording(_));
                     match cmd {
                         Command::Input(input) => {
                             if let Some(effect) = state.on_input(input, Instant::now()) {
@@ -626,9 +671,14 @@ impl TranscriptionCoordinator {
                                 run_effect(&app, &mut state, effect);
                             }
                         }
+                        Command::BarToggle => {
+                            if let Some(effect) = state.on_bar_toggle(Instant::now()) {
+                                run_effect(&app, &mut state, effect);
+                            }
+                        }
                     }
                     if !was_locked && state.is_recording_locked() {
-                        emit_recording_phase(&app, RecordingPhase::Locked);
+                        on_locked(&app, was_recording);
                     }
                 }
                 debug!("Transcription coordinator exited");
@@ -716,6 +766,25 @@ impl TranscriptionCoordinator {
             warn!("Transcription coordinator channel closed");
         }
     }
+
+    /// The bar was clicked (see [`CoordinatorState::on_bar_toggle`]).
+    pub fn toggle_from_overlay(&self) {
+        if self.tx.send(Command::BarToggle).is_err() {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+}
+
+/// A take became hands-free. `mid_take` is a tap or double-tap on a take that
+/// was already running: switch the bar to its hands-free layout and play the
+/// lock cue. A take that started locked already has both.
+fn on_locked(app: &AppHandle, mid_take: bool) {
+    emit_recording_phase(app, RecordingPhase::Locked);
+    if mid_take {
+        crate::overlay::set_recording_push_to_talk(false);
+        crate::overlay::show_recording_overlay(app);
+        play_feedback_sound(app, SoundType::Lock);
+    }
 }
 
 fn run_effect(app: &AppHandle, state: &mut CoordinatorState, effect: Effect) {
@@ -724,6 +793,9 @@ fn run_effect(app: &AppHandle, state: &mut CoordinatorState, effect: Effect) {
             binding_id,
             hotkey_string,
         } => {
+            // The bar shows the waveform-only layout while a key is held and
+            // the hands-free one (cancel, finish) for a locked take.
+            crate::overlay::set_recording_push_to_talk(!state.is_locked());
             let started = start(app, &binding_id, &hotkey_string);
             state.on_start_result(&binding_id, started);
             if started {
@@ -1334,6 +1406,48 @@ mod tests {
         assert!(state.on_input(input(mode, false), t0 + ms(5080)).is_none());
         assert!(state.on_processing_finished().is_none());
         assert_eq!(state.stage, Stage::Idle);
+    }
+
+    /// Hold-or-toggle: a Flow-style double-tap (second press inside 500 ms of
+    /// the first) keeps the take locked; a later press finishes it.
+    #[test]
+    fn hold_or_toggle_double_tap_stays_locked() {
+        let mode = ShortcutActivation::HoldOrToggle;
+        let mut state = CoordinatorState::new();
+        let t0 = Instant::now();
+
+        state.on_input(input(mode, true), t0);
+        state.on_input(input(mode, false), t0 + ms(90));
+        assert!(state.on_grace_expired().is_none());
+        assert!(state.on_input(input(mode, true), t0 + ms(180)).is_none());
+        assert!(state.on_input(input(mode, false), t0 + ms(260)).is_none());
+        assert_eq!(state.stage, Stage::Recording(BINDING.to_string()));
+        assert!(state.is_locked());
+
+        assert!(matches!(
+            state.on_input(input(mode, true), t0 + ms(3000)),
+            Some(Effect::Stop { .. })
+        ));
+    }
+
+    /// A bar click starts a locked take and the next click finishes it; a
+    /// click while transcribing does nothing.
+    #[test]
+    fn bar_click_starts_locked_and_finishes() {
+        let mut state = CoordinatorState::new();
+        let t0 = Instant::now();
+
+        assert!(matches!(
+            state.on_bar_toggle(t0),
+            Some(Effect::Start { .. })
+        ));
+        assert!(state.is_recording_locked());
+        assert!(matches!(
+            state.on_bar_toggle(t0 + ms(2000)),
+            Some(Effect::Stop { .. })
+        ));
+        assert_eq!(state.stage, Stage::Processing);
+        assert!(state.on_bar_toggle(t0 + ms(2100)).is_none());
     }
 
     /// Hold-or-toggle: a locked session ignores stray releases — only a press

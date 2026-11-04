@@ -10,9 +10,13 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use tauri::{AppHandle, Manager};
 
+#[derive(Clone, Copy)]
 pub enum SoundType {
     Start,
     Stop,
+    /// Recording is now locked hands-free. Always Shivir's own cue: the other
+    /// themes ship no lock sound.
+    Lock,
 }
 
 fn resolve_sound_path(
@@ -21,7 +25,7 @@ fn resolve_sound_path(
     sound_type: SoundType,
 ) -> Option<PathBuf> {
     let sound_file = get_sound_path(settings, sound_type);
-    let base_dir = get_sound_base_dir(settings);
+    let base_dir = get_sound_base_dir(settings, sound_type);
     match base_dir {
         tauri::path::BaseDirectory::AppData => {
             crate::portable::resolve_app_data(app, &sound_file).ok()
@@ -30,16 +34,40 @@ fn resolve_sound_path(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lock_sound_always_uses_bundled_shivir_asset() {
+        let mut settings = crate::settings::get_default_settings();
+        settings.sound_theme = SoundTheme::Custom;
+
+        assert_eq!(
+            get_sound_path(&settings, SoundType::Lock),
+            "resources/shivir_lock.wav"
+        );
+        assert!(matches!(
+            get_sound_base_dir(&settings, SoundType::Lock),
+            tauri::path::BaseDirectory::Resource
+        ));
+    }
+}
+
 fn get_sound_path(settings: &AppSettings, sound_type: SoundType) -> String {
     match (settings.sound_theme, sound_type) {
         (SoundTheme::Custom, SoundType::Start) => "custom_start.wav".to_string(),
         (SoundTheme::Custom, SoundType::Stop) => "custom_stop.wav".to_string(),
+        (_, SoundType::Lock) => "resources/shivir_lock.wav".to_string(),
         (_, SoundType::Start) => settings.sound_theme.to_start_path(),
         (_, SoundType::Stop) => settings.sound_theme.to_stop_path(),
     }
 }
 
-fn get_sound_base_dir(settings: &AppSettings) -> tauri::path::BaseDirectory {
+fn get_sound_base_dir(settings: &AppSettings, sound_type: SoundType) -> tauri::path::BaseDirectory {
+    if matches!(sound_type, SoundType::Lock) {
+        return tauri::path::BaseDirectory::Resource;
+    }
     match settings.sound_theme {
         SoundTheme::Custom => tauri::path::BaseDirectory::AppData,
         _ => tauri::path::BaseDirectory::Resource,

@@ -877,6 +877,8 @@ impl ShortcutAction for TranscribeAction {
                                         // UI while this paste ran.
                                         let owns_ui =
                                             || RECORDING_SESSION.load(Ordering::SeqCst) == session;
+                                        // Kept for the copy card if no app takes the paste.
+                                        let recovery_text = final_text.clone();
                                         let (outcome, notice) =
                                             match utils::paste(final_text, ah_clone.clone()) {
                                                 Ok(()) => {
@@ -911,6 +913,17 @@ impl ShortcutAction for TranscribeAction {
                                                 }
                                             };
                                         match (owns_ui(), notice) {
+                                            // The bar becomes the copy card; the
+                                            // notice still reaches tray and footer.
+                                            (true, Some(notice))
+                                                if outcome == TranscriptionOutcome::Failed =>
+                                            {
+                                                crate::overlay::show_paste_recovery_overlay(
+                                                    &ah_clone,
+                                                    recovery_text,
+                                                );
+                                                notices::raise_without_overlay(&ah_clone, notice)
+                                            }
                                             (true, Some(notice)) => {
                                                 notices::raise(&ah_clone, notice)
                                             }

@@ -124,13 +124,12 @@ pub struct PostProcessProvider {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum OverlayPosition {
-    Top,
-    // `none` is retired: overlay visibility is owned by `OverlayStyle` now. The
-    // alias keeps legacy stores (`"overlay_position": "none"`) deserializing
-    // instead of failing the whole load; the one-time overlay migration reads the
-    // raw stored string to recover the old "hidden" intent as `OverlayStyle::None`.
-    #[serde(alias = "none")]
+    // `top` and `none` are retired. Keeping them as aliases makes existing
+    // settings load safely while the persistent Flow Bar moves to edge docking.
+    #[serde(alias = "none", alias = "top")]
     Bottom,
+    Left,
+    Right,
 }
 
 /// Which recording overlay to display. `Minimal` and `Live` share one base
@@ -284,6 +283,8 @@ impl ModelUnloadTimeout {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum SoundTheme {
+    /// Shivir's own cues (scripts/sounds/make_shivir_sounds.py).
+    Shivir,
     Marimba,
     Pop,
     Custom,
@@ -292,6 +293,7 @@ pub enum SoundTheme {
 impl SoundTheme {
     fn as_str(&self) -> &'static str {
         match self {
+            SoundTheme::Shivir => "shivir",
             SoundTheme::Marimba => "marimba",
             SoundTheme::Pop => "pop",
             SoundTheme::Custom => "custom",
@@ -412,7 +414,7 @@ pub struct AppSettings {
     /// anything shorter is a tap that locks recording on.
     #[serde(default = "default_hold_threshold_ms")]
     pub hold_threshold_ms: u64,
-    #[serde(default)]
+    #[serde(default = "default_audio_feedback")]
     pub audio_feedback: bool,
     #[serde(default = "default_audio_feedback_volume")]
     pub audio_feedback_volume: f32,
@@ -522,7 +524,7 @@ pub struct AppSettings {
     /// Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
     /// after the target app actually reads the transcript, instead of after a
     /// fixed delay. See `paste_tx`. macOS and Windows only.
-    #[serde(default)]
+    #[serde(default = "default_reliable_paste")]
     pub reliable_paste: bool,
     #[serde(default = "default_typing_tool")]
     pub typing_tool: TypingTool,
@@ -585,6 +587,10 @@ fn default_hold_threshold_ms() -> u64 {
     300
 }
 
+fn default_audio_feedback() -> bool {
+    true
+}
+
 fn default_always_on_microphone() -> bool {
     false
 }
@@ -618,8 +624,7 @@ fn default_selected_language() -> String {
 }
 
 fn default_overlay_position() -> OverlayPosition {
-    // Position only matters when the overlay is shown; whether it shows at all is
-    // `overlay_style` (Linux defaults that to None). So a single default suffices.
+    // The resting Flow Bar defaults to the centre of the bottom edge.
     OverlayPosition::Bottom
 }
 
@@ -677,6 +682,10 @@ fn default_paste_delay_after_ms() -> u64 {
     60
 }
 
+fn default_reliable_paste() -> bool {
+    cfg!(target_os = "macos")
+}
+
 fn default_auto_submit() -> bool {
     false
 }
@@ -694,7 +703,7 @@ fn default_audio_feedback_volume() -> f32 {
 }
 
 fn default_sound_theme() -> SoundTheme {
-    SoundTheme::Marimba
+    SoundTheme::Shivir
 }
 
 fn default_theme() -> Theme {
@@ -1004,7 +1013,7 @@ pub fn get_default_settings() -> AppSettings {
         bindings,
         shortcut_activation: ShortcutActivation::default(),
         hold_threshold_ms: default_hold_threshold_ms(),
-        audio_feedback: false,
+        audio_feedback: default_audio_feedback(),
         audio_feedback_volume: default_audio_feedback_volume(),
         sound_theme: default_sound_theme(),
         start_hidden: default_start_hidden(),
@@ -1052,7 +1061,7 @@ pub fn get_default_settings() -> AppSettings {
         show_tray_icon: default_show_tray_icon(),
         paste_delay_ms: default_paste_delay_ms(),
         paste_delay_after_ms: default_paste_delay_after_ms(),
-        reliable_paste: false,
+        reliable_paste: default_reliable_paste(),
         typing_tool: default_typing_tool(),
         external_script_path: None,
         filler_word_removal_enabled: default_filler_word_removal_enabled(),
@@ -1467,7 +1476,7 @@ mod tests {
             ShortcutActivation::HoldOrToggle
         );
         assert_eq!(settings.hold_threshold_ms, default_hold_threshold_ms());
-        assert!(!settings.audio_feedback);
+        assert!(settings.audio_feedback);
         assert!(settings.filler_word_removal_enabled);
         // Bindings default to empty; the load path merges the real defaults in.
         assert!(settings.bindings.is_empty());
@@ -1764,9 +1773,18 @@ mod tests {
     }
 
     #[test]
+    fn legacy_top_overlay_position_deserializes_to_bottom() {
+        let raw = serde_json::json!({ "overlay_position": "top" });
+        let position: OverlayPosition =
+            serde_json::from_value(raw.get("overlay_position").unwrap().clone())
+                .expect("legacy top position should remain loadable");
+        assert_eq!(position, OverlayPosition::Bottom);
+    }
+
+    #[test]
     fn overlay_migration_promotes_enabled_overlay_to_live() {
         let mut settings = get_default_settings();
-        settings.overlay_position = OverlayPosition::Top;
+        settings.overlay_position = OverlayPosition::Bottom;
         settings.overlay_style = OverlayStyle::Minimal;
 
         let raw = serde_json::json!({
@@ -1776,7 +1794,7 @@ mod tests {
 
         assert!(apply_settings_migrations(&mut settings, &raw));
         assert_eq!(settings.overlay_style, OverlayStyle::Live);
-        assert_eq!(settings.overlay_position, OverlayPosition::Top);
+        assert_eq!(settings.overlay_position, OverlayPosition::Bottom);
     }
 
     #[test]

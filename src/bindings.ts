@@ -125,6 +125,55 @@ async changeOverlayStyleSetting(style: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Expands the existing transparent panel to the cursor's monitor while the
+ * user drags the Flow Bar. The renderer owns the ghost and drop targets.
+ */
+async beginOverlayDrag() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("begin_overlay_drag") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Persists the selected edge and collapses the drag surface back around the
+ * painted Flow Bar.
+ */
+async finishOverlayDrag(edge: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("finish_overlay_drag", { edge }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Mirrors the main dictation shortcut when the expanded idle bar is clicked.
+ */
+async toggleOverlayDictation() : Promise<void> {
+    await TAURI_INVOKE("toggle_overlay_dictation");
+},
+async dismissOverlayCard() : Promise<void> {
+    await TAURI_INVOKE("dismiss_overlay_card");
+},
+async showFlowbarTooltip(kind: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("show_flowbar_tooltip", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async hideFlowbarTooltip() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("hide_flowbar_tooltip") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeDebugModeSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_debug_mode_setting", { enabled }) };
@@ -1362,7 +1411,7 @@ notices: Notice[];
  * `None` when a notice was cleared.
  */
 raised: Notice | null }
-export type OverlayPosition = "top" | "bottom"
+export type OverlayPosition = "bottom" | "left" | "right"
 /**
  * Which recording overlay to display. `Minimal` and `Live` share one base
  * (the pill); `Live` grows into the panel that shows live transcription text.
@@ -1466,7 +1515,11 @@ export type ShortcutActivation =
  */
 "hold_or_toggle"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
-export type SoundTheme = "marimba" | "pop" | "custom"
+export type SoundTheme = 
+/**
+ * Shivir's own cues (scripts/sounds/make_shivir_sounds.py).
+ */
+"shivir" | "marimba" | "pop" | "custom"
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */

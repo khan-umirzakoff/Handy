@@ -629,12 +629,13 @@ pub fn change_audio_feedback_volume_setting(app: AppHandle, volume: f32) -> Resu
 pub fn change_sound_theme_setting(app: AppHandle, theme: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     let parsed = match theme.as_str() {
+        "shivir" => SoundTheme::Shivir,
         "marimba" => SoundTheme::Marimba,
         "pop" => SoundTheme::Pop,
         "custom" => SoundTheme::Custom,
         other => {
-            warn!("Invalid sound theme '{}', defaulting to marimba", other);
-            SoundTheme::Marimba
+            warn!("Invalid sound theme '{}', defaulting to shivir", other);
+            SoundTheme::Shivir
         }
     };
     settings.sound_theme = parsed;
@@ -734,10 +735,11 @@ pub fn change_spoken_languages_setting(
 pub fn change_overlay_position_setting(app: AppHandle, position: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     let parsed = match position.as_str() {
-        // "none" is retired (visibility is overlay_style now); fold legacy callers
-        // onto Bottom rather than warn.
-        "none" | "bottom" => OverlayPosition::Bottom,
-        "top" => OverlayPosition::Top,
+        // `none` and `top` are legacy values. Visibility belongs to
+        // overlay_style; old top placement migrates to the default bottom dock.
+        "none" | "top" | "bottom" => OverlayPosition::Bottom,
+        "left" => OverlayPosition::Left,
+        "right" => OverlayPosition::Right,
         other => {
             warn!("Invalid overlay position '{}', defaulting to bottom", other);
             OverlayPosition::Bottom
@@ -747,9 +749,16 @@ pub fn change_overlay_position_setting(app: AppHandle, position: String) -> Resu
     settings::write_settings(&app, settings);
 
     // Whether the overlay shows at all is owned by overlay_style now; position
-    // only ever toggles Top/Bottom, so the enabled cache is untouched here.
+    // Dock selection does not control visibility, so the enabled cache is
+    // untouched here.
     // Update overlay position without recreating window
     crate::utils::update_overlay_position(&app);
+    let edge = match parsed {
+        OverlayPosition::Bottom => "bottom",
+        OverlayPosition::Left => "left",
+        OverlayPosition::Right => "right",
+    };
+    let _ = app.emit_to("recording_overlay", "overlay-position-changed", edge);
 
     Ok(())
 }
@@ -774,8 +783,9 @@ pub fn change_overlay_style_setting(app: AppHandle, style: String) -> Result<(),
     // resumes) emitting on the next audio callback.
     crate::overlay::update_overlay_enabled_cache(parsed != OverlayStyle::None);
 
-    // Reposition in case the window needs to re-center for the new style.
-    crate::utils::update_overlay_position(&app);
+    // Apply visibility immediately. Enabled styles show the persistent resting
+    // bar; None is the only state that hides the native window.
+    crate::overlay::show_idle_overlay(&app);
 
     Ok(())
 }

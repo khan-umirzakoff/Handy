@@ -1,459 +1,785 @@
 import { listen } from "@tauri-apps/api/event";
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./RecordingOverlay.css";
 import { commands, events } from "@/bindings";
 import type {
   Notice,
+  OverlayPosition,
   StreamPhase,
   StreamPhaseEvent,
   StreamTextEvent,
   StreamWorkKind,
 } from "@/bindings";
-import { NoticeBadgeIcon } from "@/components/icons/NoticeBadgeIcon";
-import i18n, { syncLanguageFromSettings } from "@/i18n";
+import { syncLanguageFromSettings } from "@/i18n";
 import { noticeDisplay } from "@/lib/notices";
-import type { ModelStateEvent } from "@/lib/types/events";
-import { getLanguageDirection } from "@/lib/utils/rtl";
 
 type OverlayState =
-  | "recording"
+  | "resting"
+  | "recording-ptt"
+  | "recording-toggle"
   | "streaming"
   | "transcribing"
   | "processing"
+  | "paste-recovery"
   | "notice"
-  | "live_notice";
+  | "error";
 
-const isNoticeState = (state: OverlayState) =>
-  state === "notice" || state === "live_notice";
+type OverlayNotice = {
+  title: string;
+  body: string;
+};
 
-// Number of reactive bars in the waveform (the simple, smoothed style shared by
-// every overlay form). Mic levels arrive as 16 FFT buckets; we take the first N.
-const WAVE_BARS = 9;
+type DragPhase = "idle" | "arming" | "dragging" | "returning";
+type TooltipKind = "dictate" | "cancel" | "finish";
 
-// Only call out a model load in the Live preview once it has run this long.
-// Warm loads finish in well under this (~0.2s on Apple Silicon, ~1.5s on a
-// Windows CPU backend), so the common case never flashes a loading notice while
-// the user is speaking; cold loads can take 40s+.
-const SLOW_MODEL_LOAD_MS = 2000;
+const WAVE_BARS = 10;
+const DRAG_THRESHOLD_SQ = 25;
+const WAVE_GAIN = 5;
+const HOVER_MORPH_LOCK_MS = 100;
+const BUBBLE_TOOLTIP_DELAY_MS = 150;
+const ACTION_TOOLTIP_DELAY_MS = 50;
+const RECOVERY_TIMEOUT_MS = 8_000;
+const RECOVERY_COPIED_CLOSE_MS = 1_200;
+const NOTICE_TIMEOUT_MS = 6_000;
 
-// Matches the delay in `hide_recording_overlay`, so a notice can fade out.
-const OVERLAY_FADE_MS = 300;
+const WAVE_BAR_GEOMETRY = Array.from({ length: WAVE_BARS }, (_, index) => {
+  const center = (WAVE_BARS - 1) / 2;
+  const distance = Math.abs(center - index);
+  return {
+    heightScale: Math.max(0, 1 - (distance * distance) / 48),
+    delay: 0.1 * (index < Math.ceil(WAVE_BARS / 2) ? index : index - WAVE_BARS),
+  };
+});
 
-// 13px padding on each side, the 16px badge and its 7px gap.
-const NOTICE_PILL_CHROME = 49;
+const normalizePosition = (value: string | undefined): OverlayPosition => {
+  if (value === "left" || value === "right") return value;
+  return "bottom";
+};
+
+const nearestEdge = (x: number, y: number): OverlayPosition => {
+  const targets: Array<[OverlayPosition, number, number]> = [
+    ["bottom", window.innerWidth / 2, window.innerHeight - 23],
+    ["left", 18, window.innerHeight / 2],
+    ["right", window.innerWidth - 18, window.innerHeight / 2],
+  ];
+  return targets.reduce(
+    (nearest, target) => {
+      const distance = (target[1] - x) ** 2 + (target[2] - y) ** 2;
+      return distance < nearest.distance
+        ? { edge: target[0], distance }
+        : nearest;
+    },
+    { edge: "bottom" as OverlayPosition, distance: Number.POSITIVE_INFINITY },
+  ).edge;
+};
+
+const edgeTarget = (edge: OverlayPosition) => {
+  if (edge === "left") return { x: 18, y: window.innerHeight / 2 };
+  if (edge === "right") {
+    return { x: window.innerWidth - 18, y: window.innerHeight / 2 };
+  }
+  return { x: window.innerWidth / 2, y: window.innerHeight - 23 };
+};
+
+const MicGlyph: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    className={className}
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <rect x="9" y="2" width="6" height="11" rx="3" />
+    <path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8" />
+  </svg>
+);
 
 const RecordingOverlay: React.FC = () => {
   const { t } = useTranslation();
-  const [isVisible, setIsVisible] = useState(false);
-  const [state, setState] = useState<OverlayState>("recording");
-  // `Stream::play()` returning does not mean hardware callbacks are flowing.
-  // Stay visually in an arming state until the backend processes the first
-  // actual microphone sample chunk.
-  const [captureReady, setCaptureReady] = useState(false);
-  // Recording starts while the model loads in the background. Say so, otherwise
-  // a cold start looks like an empty Live preview that ignores speech, then a
-  // hung "Transcribing..." spinner. Once recording stops, any in-flight load is
-  // the wait, so the working label reflects it immediately; the Live notice
-  // waits for the load to be slow so fast loads don't flash it mid-speech.
-  const [modelLoading, setModelLoading] = useState(false);
-  const [modelLoadSlow, setModelLoadSlow] = useState(false);
-  const modelLoadTimerRef = useRef<ReturnType<typeof setTimeout>>();
-  // Latched per Live session: once the loading notice has opened the panel, keep
-  // it open after the load so it doesn't collapse and reopen when text arrives.
-  const [loadNoticeShown, setLoadNoticeShown] = useState(false);
-  const [levels, setLevels] = useState<number[]>(Array(WAVE_BARS).fill(0));
+  const [isVisible, setIsVisible] = useState(true);
+  const [state, setState] = useState<OverlayState>("resting");
+  const [position, setPosition] = useState<OverlayPosition>("bottom");
+  const [isHovered, setIsHovered] = useState(false);
+  const [isNativeHovered, setIsNativeHovered] = useState(false);
   const [streamText, setStreamText] = useState<StreamTextEvent>({
     committed: "",
     tentative: "",
   });
   const [phase, setPhase] = useState<StreamPhase>("listening");
-  const [workKind, setWorkKind] = useState<StreamWorkKind>("transcribing");
-  const [elapsed, setElapsed] = useState(0);
-  // Bumped on each new streaming session so the Live card remounts fresh (replays
-  // the pop-in, and never animates in from the previous panel's open size).
-  const [session, setSession] = useState(0);
-  // Overlay placement (top vs bottom of the screen). The Live panel grows downward
-  // from a top overlay (oldest line under the pill) and upward from a bottom one.
-  const [position, setPosition] = useState<"top" | "bottom">("bottom");
-  // True once live text overflows the cap. A top overlay fades its top edge only
-  // while overflowing, so the resting first line stays crisp flush under the pill.
-  const [overflowing, setOverflowing] = useState(false);
-  const [notice, setNotice] = useState<Notice | null>(null);
-  const [noticeWidth, setNoticeWidth] = useState<number>();
-  const noticeProbeRef = useRef<HTMLSpanElement>(null);
-  const fadeTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const [, setWorkKind] = useState<StreamWorkKind>("transcribing");
+  const [dragPhase, setDragPhase] = useState<DragPhase>("idle");
+  const [dragEdge, setDragEdge] = useState<OverlayPosition>("bottom");
+  const [ghost, setGhost] = useState({ x: -100, y: -100 });
+  const [pasteRecoveryText, setPasteRecoveryText] = useState("");
+  const [recoveryCopied, setRecoveryCopied] = useState(false);
+  const [notice, setNotice] = useState<OverlayNotice | null>(null);
 
-  const smoothedLevelsRef = useRef<number[]>(Array(16).fill(0));
-  // Live-text scroll-back: the text region "sticks" to the newest line while the
-  // user is at the bottom; if they scroll up to read history, auto-follow pauses
-  // until they scroll back down.
-  const capRef = useRef<HTMLDivElement>(null);
-  const pinnedRef = useRef(true);
-  const direction = getLanguageDirection(i18n.language);
+  const waveformRef = useRef<HTMLSpanElement>(null);
+  const audioTargetRef = useRef(0);
+  const audioScaleRef = useRef(1);
+  const dragOriginRef = useRef<{ x: number; y: number } | null>(null);
+  const dragStartedRef = useRef(false);
+  const dragArmingRef = useRef(false);
+  const dragTokenRef = useRef(0);
+  const suppressClickRef = useRef(false);
+  const tooltipTimerRef = useRef<number | null>(null);
+  const hoverLockedUntilRef = useRef(0);
+  const hoverReleaseTimerRef = useRef<number | null>(null);
+  const recoveryTimerRef = useRef<number | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    const setupEventListeners = async () => {
-      const unlistenNotice = await listen<Notice>("overlay-notice", (event) => {
-        clearTimeout(fadeTimerRef.current);
-        setNotice(event.payload);
-      });
-
-      const unlistenShow = await listen("show-overlay", async (event) => {
-        const overlayState = event.payload as OverlayState;
-        clearTimeout(fadeTimerRef.current);
-        if (!isNoticeState(overlayState)) setNotice(null);
-        // Reset synchronously before settings I/O. A fast microphone can emit
-        // recording-ready while the awaits below are in flight; resetting after
-        // them would overwrite that event and leave the overlay stuck arming.
-        if (overlayState === "recording" || overlayState === "streaming") {
-          setCaptureReady(false);
-          smoothedLevelsRef.current = Array(16).fill(0);
-          setLevels(Array(WAVE_BARS).fill(0));
-          setStreamText({ committed: "", tentative: "" });
+    let mounted = true;
+    const setup = async () => {
+      await syncLanguageFromSettings();
+      try {
+        const settings = await commands.getAppSettings();
+        if (mounted && settings.status === "ok") {
+          setPosition(normalizePosition(settings.data.overlay_position));
+          setIsVisible(settings.data.overlay_style !== "none");
         }
+      } catch {
+        // The backend state event remains authoritative if the settings read fails.
+      }
 
-        await syncLanguageFromSettings();
-        // The Live panel flows downward from a top overlay and upward from a
-        // bottom one; read the placement so the layout can flip to match.
-        try {
-          const settings = await commands.getAppSettings();
-          if (settings.status === "ok") {
-            setPosition(
-              settings.data.overlay_position === "top" ? "top" : "bottom",
-            );
+      const unlistenShow = await listen<OverlayState>(
+        "show-overlay",
+        (event) => {
+          setState(event.payload);
+          if (
+            event.payload === "resting" ||
+            event.payload === "recording-ptt" ||
+            event.payload === "recording-toggle" ||
+            event.payload === "streaming"
+          ) {
+            setStreamText({ committed: "", tentative: "" });
+            setPhase("listening");
           }
-        } catch {
-          // Keep the previous/default placement if settings can't be read.
-        }
-        setState(overlayState);
-        if (overlayState === "streaming") {
-          setPhase("listening");
-          setWorkKind("transcribing");
-          setElapsed(0);
-          setLoadNoticeShown(false);
-          setSession((s) => s + 1); // remount the card fresh for this session
-        }
-        setIsVisible(true);
-      });
-
-      const unlistenHide = await listen("hide-overlay", () => {
-        setIsVisible(false);
-        setCaptureReady(false);
-        // A notice keeps rendering while it fades. Dropping the transcript here
-        // stops a later notice from showing an old session's text.
-        clearTimeout(fadeTimerRef.current);
-        fadeTimerRef.current = setTimeout(() => {
-          setNotice(null);
-          setStreamText({ committed: "", tentative: "" });
-        }, OVERLAY_FADE_MS);
-      });
-
-      const unlistenReady = await listen("recording-ready", () => {
-        setElapsed(0);
-        setCaptureReady(true);
-      });
-
+          setIsVisible(true);
+        },
+      );
+      const unlistenHide = await listen("hide-overlay", () =>
+        setIsVisible(false),
+      );
+      const unlistenPosition = await listen<string>(
+        "overlay-position-changed",
+        (event) => setPosition(normalizePosition(event.payload)),
+      );
       const unlistenLevel = await listen<number[]>("mic-level", (event) => {
-        const newLevels = event.payload as number[];
-        // Exponential smoothing across the 16 buckets, then take the first N
-        // bars for the shared waveform.
-        const smoothed = smoothedLevelsRef.current.map((prev, i) => {
-          const target = newLevels[i] || 0;
-          return prev * 0.7 + target * 0.3;
-        });
-        smoothedLevelsRef.current = smoothed;
-        setLevels(smoothed.slice(0, WAVE_BARS));
+        // Handy exposes a 16-bucket vocal spectrum; recovered Flow drives its
+        // primary waveform from one scalar audio envelope. Collapse the buckets
+        // to RMS here, then smooth it in the animation-frame loop below.
+        const buckets = event.payload.filter(Number.isFinite);
+        const meanSquare = buckets.length
+          ? buckets.reduce((sum, level) => sum + level * level, 0) /
+            buckets.length
+          : 0;
+        audioTargetRef.current = Math.min(1, Math.sqrt(meanSquare));
       });
-
+      const unlistenNativeHover = await listen<boolean>(
+        "flowbar-native-hover",
+        (event) => setIsNativeHovered(event.payload),
+      );
+      const unlistenPasteRecovery = await listen<string>(
+        "paste-recovery",
+        (event) => {
+          setPasteRecoveryText(event.payload);
+          setRecoveryCopied(false);
+        },
+      );
       const unlistenStream = await events.streamTextEvent.listen((event) => {
         setStreamText(event.payload);
       });
-
       const unlistenPhase = await events.streamPhaseEvent.listen((event) => {
         const payload: StreamPhaseEvent = event.payload;
         setPhase(payload.phase);
         if (payload.kind) setWorkKind(payload.kind);
       });
 
-      // The backend ends every `loading_started` with exactly one of completed
-      // or failed, so only those end a load. Other events (e.g. `unloaded` from
-      // the idle watcher) aren't ordered against an in-flight load and must not
-      // clear it.
-      const unlistenModel = await listen<ModelStateEvent>(
-        "model-state-changed",
-        (event) => {
-          const type = event.payload.event_type;
-          if (type === "loading_started") {
-            clearTimeout(modelLoadTimerRef.current);
-            setModelLoading(true);
-            setModelLoadSlow(false);
-            modelLoadTimerRef.current = setTimeout(
-              () => setModelLoadSlow(true),
-              SLOW_MODEL_LOAD_MS,
-            );
-          } else if (
-            type === "loading_completed" ||
-            type === "loading_failed"
-          ) {
-            clearTimeout(modelLoadTimerRef.current);
-            setModelLoading(false);
-            setModelLoadSlow(false);
-          }
-        },
-      );
-
       return () => {
-        unlistenNotice();
         unlistenShow();
         unlistenHide();
-        unlistenReady();
+        unlistenPosition();
         unlistenLevel();
+        unlistenNativeHover();
+        unlistenPasteRecovery();
         unlistenStream();
         unlistenPhase();
-        unlistenModel();
-        clearTimeout(modelLoadTimerRef.current);
-        clearTimeout(fadeTimerRef.current);
       };
     };
 
-    setupEventListeners();
+    let cleanup: (() => void) | undefined;
+    void setup().then((value) => {
+      if (mounted) cleanup = value;
+      else value?.();
+    });
+    return () => {
+      mounted = false;
+      cleanup?.();
+    };
   }, []);
 
-  // Elapsed capture timer starts only once microphone samples are flowing.
+  // Rust sends notice codes; the text comes from the shared notice table.
   useEffect(() => {
-    if (state !== "streaming" || !isVisible || !captureReady) return;
-    const id = setInterval(() => setElapsed((e) => e + 1), 1000);
-    return () => clearInterval(id);
-  }, [state, isVisible, captureReady]);
+    let unlisten: (() => void) | undefined;
+    let mounted = true;
+    void listen<Notice>("overlay-notice", (event) => {
+      const display = noticeDisplay(event.payload.code);
+      setNotice({
+        title: t(display.title),
+        body: display.explanation?.(t) ?? event.payload.detail ?? "",
+      });
+    }).then((off) => {
+      if (mounted) unlisten = off;
+      else off();
+    });
+    return () => {
+      mounted = false;
+      unlisten?.();
+    };
+  }, [t]);
 
-  // Stick to the bottom as text streams in — but only while pinned, so a user who
-  // has scrolled up to read history isn't yanked back down by the next chunk.
-  useLayoutEffect(() => {
-    const el = capRef.current;
-    if (!el) return;
-    // Fade the top edge only once text actually overflows the cap.
-    setOverflowing(el.scrollHeight > el.clientHeight + 1);
-    if (pinnedRef.current) el.scrollTop = el.scrollHeight;
-  }, [streamText]);
+  const displayState =
+    state === "resting" && (isHovered || isNativeHovered) ? "ready" : state;
+  const isWorking =
+    state === "transcribing" ||
+    state === "processing" ||
+    (state === "streaming" && phase === "working");
+  const hasStreamText = Boolean(streamText.committed || streamText.tentative);
+  const isListening =
+    state === "recording-ptt" ||
+    state === "recording-toggle" ||
+    (state === "streaming" && phase === "listening");
+  const hasToggleControls =
+    state === "recording-toggle" ||
+    (state === "streaming" && phase === "listening");
 
-  // `session` re-runs this when a new Live session starts mid-load (e.g. a
-  // retry during a cold load), since the reset doesn't change the other deps.
   useEffect(() => {
-    if (modelLoadSlow && state === "streaming") setLoadNoticeShown(true);
-  }, [modelLoadSlow, state, session]);
+    let frame = 0;
+    const updateWaveform = () => {
+      const target = isListening
+        ? Math.max(1, audioTargetRef.current * WAVE_GAIN)
+        : 1;
+      const current = audioScaleRef.current;
+      const smoothing = target > current ? 0.28 : 0.14;
+      const next = current + (target - current) * smoothing;
+      audioScaleRef.current = Math.abs(next - target) < 0.01 ? target : next;
+      waveformRef.current?.style.setProperty(
+        "--audio-scale",
+        audioScaleRef.current.toFixed(3),
+      );
+      frame = window.requestAnimationFrame(updateWaveform);
+    };
+    frame = window.requestAnimationFrame(updateWaveform);
+    return () => window.cancelAnimationFrame(frame);
+  }, [isListening]);
 
-  // Each fresh streaming session starts pinned to the bottom, fade cleared.
-  useEffect(() => {
-    pinnedRef.current = true;
-    setOverflowing(false);
-  }, [session]);
-
-  const shownNotice = notice && isNoticeState(state) ? notice : null;
-  const noticeTitle = shownNotice
-    ? t(noticeDisplay(shownNotice.code).title)
-    : "";
-
-  // CSS can't animate to an intrinsic width, so a notice pill gets a measured one.
-  useLayoutEffect(() => {
-    const probe = noticeProbeRef.current;
-    if (!probe) return;
-    setNoticeWidth(
-      Math.ceil(probe.getBoundingClientRect().width) + NOTICE_PILL_CHROME,
-    );
-  }, [noticeTitle, isVisible]);
-
-  if (!isVisible && !shownNotice) return null;
-
-  // Re-pin when the user is within ~a line of the bottom; unpin otherwise.
-  const handleStreamScroll = () => {
-    const el = capRef.current;
-    if (!el) return;
-    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 16;
-  };
-
-  const fmtTime = (s: number) =>
-    `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-
-  const transcribingLabel = modelLoading
-    ? t("overlay.loadingModel")
-    : t("overlay.transcribing");
-
-  // ---- Shared building blocks (one visual language for every overlay form) ----
   const waveform = (
-    <div className={`swave ${captureReady ? "ready" : "arming"}`}>
-      {levels.map((v, i) => (
+    <span
+      ref={waveformRef}
+      className={`flow-wave ${isListening ? "is-animated mic-active" : ""}`}
+      aria-hidden="true"
+    >
+      {WAVE_BAR_GEOMETRY.map((bar, index) => (
         <i
-          key={i}
-          style={{
-            height: `${Math.max(3, Math.min(18, 3 + Math.pow(v, 0.7) * 15))}px`,
-          }}
+          key={index}
+          style={
+            {
+              "--bar-height-scale": bar.heightScale,
+              "--delay": `${bar.delay}s`,
+            } as React.CSSProperties
+          }
         />
       ))}
-    </div>
-  );
-
-  const cancelBtn = (
-    <button
-      className="sx"
-      aria-label="cancel"
-      onClick={() => commands.cancelOperation()}
-    >
-      <svg viewBox="0 0 16 16" aria-hidden="true">
-        <path
-          d="M4 4 L12 12 M12 4 L4 12"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-        />
-      </svg>
-    </button>
-  );
-
-  // dot (left) | waveform (center) | timer + cancel (right) — same structure for
-  // pill & panel, so the Live morph is a pure width change.
-  const listeningRow = (showTimer: boolean, showCancel: boolean) => (
-    <div className="sbase">
-      <div className="sbase-l">
-        <span className={`sdot ${captureReady ? "ready" : "arming"}`} />
-      </div>
-      {waveform}
-      <div className="sbase-r">
-        {showTimer && <span className="stimer">{fmtTime(elapsed)}</span>}
-        {showCancel && cancelBtn}
-      </div>
-    </div>
-  );
-
-  // spinner (left) | label (center) | cancel (right) — same 3-zone grid as the
-  // listening row, so the label is centered.
-  const workingRow = (label: string, showCancel: boolean) => (
-    <div className="sbase">
-      <div className="sbase-l">
-        <span className="sspinner" />
-      </div>
-      <span className="swork-label">{label}</span>
-      <div className="sbase-r">{showCancel && cancelBtn}</div>
-    </div>
-  );
-
-  const noticeRow = (
-    <div className="sbase snotice">
-      <NoticeBadgeIcon className="nglyph" />
-      <span className="nlabel">{noticeTitle}</span>
-    </div>
-  );
-  const noticeProbe = shownNotice && (
-    <span ref={noticeProbeRef} className="nlabel nprobe" aria-hidden="true">
-      {noticeTitle}
     </span>
   );
-  const noticeClass = shownNotice ? `cnotice level-${shownNotice.level}` : "";
-  const dismissNotice = shownNotice
-    ? () => commands.dismissOverlayNotice()
-    : undefined;
 
-  // ---- Live overlay: a pill that sculpts open into a panel ----
-  const liveNotice = state === "live_notice" ? shownNotice : null;
-  if (state === "streaming" || liveNotice) {
-    const hasText =
-      streamText.committed.length > 0 || streamText.tentative.length > 0;
-    const working = !liveNotice && phase === "working";
-    // A notice keeps the transcript; with none, the panel explains the notice.
-    const noticeText =
-      liveNotice && !hasText
-        ? (noticeDisplay(liveNotice.code).explanation?.(t) ?? liveNotice.detail)
-        : null;
-    // While listening, a slow model load opens the panel with a notice where the
-    // text would be, so speech that isn't transcribing yet doesn't look ignored.
-    const loadingNotice = !liveNotice && modelLoadSlow && !working && !hasText;
-    // Keep the panel open whenever there's text — even while finalizing — so the
-    // transcript stays put under a working spinner instead of collapsing and
-    // squishing the text mid-stream. Only fall back to the small working pill
-    // when there was no text to preserve.
-    const open = liveNotice
-      ? hasText || !!noticeText
-      : hasText || loadingNotice || (loadNoticeShown && !working);
-    const collapsed = working && !hasText;
+  const loader = (
+    <span className="flow-loader" aria-hidden="true">
+      {Array.from({ length: 8 }, (_, index) => (
+        <i
+          key={index}
+          style={
+            {
+              transform: `rotate(${index * 45}deg) translateY(-6px)`,
+              animationDelay: `${-0.1375 * (7 - index)}s`,
+            } as React.CSSProperties
+          }
+        />
+      ))}
+    </span>
+  );
 
-    return (
-      <div dir={direction} className={`ov-stage ${position}`}>
-        {noticeProbe}
+  const resetDrag = () => {
+    dragTokenRef.current += 1;
+    dragOriginRef.current = null;
+    dragStartedRef.current = false;
+    dragArmingRef.current = false;
+  };
+
+  const hideTooltip = useCallback(() => {
+    if (tooltipTimerRef.current !== null) {
+      window.clearTimeout(tooltipTimerRef.current);
+      tooltipTimerRef.current = null;
+    }
+    void commands.hideFlowbarTooltip();
+  }, []);
+
+  const clearRecoveryTimer = useCallback(() => {
+    if (recoveryTimerRef.current !== null) {
+      window.clearTimeout(recoveryTimerRef.current);
+      recoveryTimerRef.current = null;
+    }
+  }, []);
+
+  const dismissRecovery = useCallback(() => {
+    clearRecoveryTimer();
+    setPasteRecoveryText("");
+    setRecoveryCopied(false);
+    void commands.dismissOverlayCard();
+  }, [clearRecoveryTimer]);
+
+  const armRecoveryTimer = useCallback(
+    (delay = RECOVERY_TIMEOUT_MS) => {
+      clearRecoveryTimer();
+      recoveryTimerRef.current = window.setTimeout(() => {
+        recoveryTimerRef.current = null;
+        dismissRecovery();
+      }, delay);
+    },
+    [clearRecoveryTimer, dismissRecovery],
+  );
+
+  useEffect(() => {
+    if (state === "paste-recovery" && pasteRecoveryText) {
+      armRecoveryTimer();
+    } else {
+      clearRecoveryTimer();
+    }
+    return clearRecoveryTimer;
+  }, [armRecoveryTimer, clearRecoveryTimer, pasteRecoveryText, state]);
+
+  const copyRecoveryText = useCallback(async () => {
+    if (!pasteRecoveryText || recoveryCopied) return;
+    try {
+      await writeText(pasteRecoveryText);
+      setRecoveryCopied(true);
+      armRecoveryTimer(RECOVERY_COPIED_CLOSE_MS);
+    } catch {
+      // Keep the card open so the transcript remains recoverable on screen.
+    }
+  }, [armRecoveryTimer, pasteRecoveryText, recoveryCopied]);
+
+  const clearNoticeTimer = useCallback(() => {
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = null;
+    }
+  }, []);
+
+  const dismissNotice = useCallback(() => {
+    clearNoticeTimer();
+    setNotice(null);
+    void commands.dismissOverlayNotice();
+  }, [clearNoticeTimer]);
+
+  const armNoticeTimer = useCallback(() => {
+    clearNoticeTimer();
+    noticeTimerRef.current = window.setTimeout(() => {
+      noticeTimerRef.current = null;
+      dismissNotice();
+    }, NOTICE_TIMEOUT_MS);
+  }, [clearNoticeTimer, dismissNotice]);
+
+  useEffect(() => {
+    if (state === "notice" && notice) armNoticeTimer();
+    else clearNoticeTimer();
+    return clearNoticeTimer;
+  }, [armNoticeTimer, clearNoticeTimer, notice, state]);
+
+  const showTooltip = useCallback(
+    (kind: TooltipKind, delay: number) => {
+      hideTooltip();
+      tooltipTimerRef.current = window.setTimeout(() => {
+        tooltipTimerRef.current = null;
+        void commands.showFlowbarTooltip(kind);
+      }, delay);
+    },
+    [hideTooltip],
+  );
+
+  useEffect(() => hideTooltip, [hideTooltip]);
+  useEffect(() => {
+    hideTooltip();
+  }, [hideTooltip, state, position]);
+
+  const clearHoverRelease = useCallback(() => {
+    if (hoverReleaseTimerRef.current !== null) {
+      window.clearTimeout(hoverReleaseTimerRef.current);
+      hoverReleaseTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(
+    () => () => {
+      clearHoverRelease();
+    },
+    [clearHoverRelease],
+  );
+
+  useEffect(() => {
+    if (state !== "resting") {
+      clearHoverRelease();
+      setIsHovered(false);
+    }
+  }, [clearHoverRelease, state]);
+
+  useEffect(() => {
+    if (state !== "resting") return;
+
+    if (isNativeHovered) {
+      clearHoverRelease();
+      hoverLockedUntilRef.current = performance.now() + HOVER_MORPH_LOCK_MS;
+      showTooltip("dictate", BUBBLE_TOOLTIP_DELAY_MS);
+      return;
+    }
+
+    // WKWebView can miss pointerleave when the native panel switches back to
+    // click-through. Treat the native alpha hit-test as authoritative so the
+    // ready pill and tooltip cannot remain latched after the pointer has left.
+    clearHoverRelease();
+    setIsHovered(false);
+    hideTooltip();
+  }, [clearHoverRelease, hideTooltip, isNativeHovered, showTooltip, state]);
+
+  const handleBarPointerEnter = () => {
+    if (state !== "resting") return;
+    clearHoverRelease();
+    hoverLockedUntilRef.current = performance.now() + HOVER_MORPH_LOCK_MS;
+    setIsHovered(true);
+    showTooltip("dictate", BUBBLE_TOOLTIP_DELAY_MS);
+  };
+
+  const handleBarPointerLeave = () => {
+    if (state !== "resting") return;
+    hideTooltip();
+    clearHoverRelease();
+    const remaining = Math.max(
+      0,
+      hoverLockedUntilRef.current - performance.now(),
+    );
+    if (remaining === 0) {
+      setIsHovered(false);
+      return;
+    }
+    hoverReleaseTimerRef.current = window.setTimeout(() => {
+      hoverReleaseTimerRef.current = null;
+      setIsHovered(false);
+    }, remaining);
+  };
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || state !== "resting") return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragTokenRef.current += 1;
+    dragOriginRef.current = { x: event.clientX, y: event.clientY };
+    dragStartedRef.current = false;
+    suppressClickRef.current = false;
+  };
+
+  const handlePointerMove = async (
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    const origin = dragOriginRef.current;
+    if (!origin) return;
+
+    if (!dragStartedRef.current && !dragArmingRef.current) {
+      const distance =
+        (event.clientX - origin.x) ** 2 + (event.clientY - origin.y) ** 2;
+      if (distance <= DRAG_THRESHOLD_SQ) return;
+      dragArmingRef.current = true;
+      const dragToken = dragTokenRef.current;
+      setDragPhase("arming");
+      const result = await commands.beginOverlayDrag();
+      if (dragToken !== dragTokenRef.current || !dragOriginRef.current) {
+        await commands.finishOverlayDrag(position);
+        setDragPhase("idle");
+        return;
+      }
+      dragArmingRef.current = false;
+      if (result.status === "error") {
+        setDragPhase("idle");
+        resetDrag();
+        return;
+      }
+      dragStartedRef.current = true;
+      suppressClickRef.current = true;
+      setDragPhase("dragging");
+      return;
+    }
+
+    if (dragStartedRef.current) {
+      setGhost({ x: event.clientX, y: event.clientY });
+      setDragEdge(nearestEdge(event.clientX, event.clientY));
+    }
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStartedRef.current) {
+      resetDrag();
+      return;
+    }
+    const edge = nearestEdge(event.clientX, event.clientY);
+    const target = edgeTarget(edge);
+    setDragEdge(edge);
+    setGhost(target);
+    setDragPhase("returning");
+    window.setTimeout(async () => {
+      await commands.finishOverlayDrag(edge);
+      setPosition(edge);
+      setDragPhase("idle");
+      setIsHovered(false);
+      resetDrag();
+    }, 300);
+  };
+
+  const handleBarClick = () => {
+    if (suppressClickRef.current || state !== "resting") {
+      suppressClickRef.current = false;
+      return;
+    }
+    void commands.toggleOverlayDictation();
+  };
+
+  if (!isVisible) return null;
+
+  return (
+    <main
+      className={`flowbar-root ${dragPhase !== "idle" ? "is-dragging" : ""}`}
+      data-position={position}
+      data-state={displayState}
+    >
+      {dragPhase !== "idle" && (
         <div
-          key={session}
-          className={`scard ${open ? "open" : ""} ${collapsed ? "working" : ""} ${
-            isVisible ? "" : "leaving"
-          } ${noticeClass}`}
-          style={liveNotice && !open ? { width: noticeWidth } : undefined}
-          onClick={dismissNotice}
+          className={`drag-surface ${dragPhase === "returning" ? "exiting" : ""}`}
         >
-          <div className="stext">
-            <div className="stext-clip">
-              <div
-                className={`stext-cap ${overflowing ? "overflowing" : ""}`}
-                ref={capRef}
-                onScroll={handleStreamScroll}
+          {(["bottom", "left", "right"] as OverlayPosition[]).map((edge) => (
+            <span
+              key={edge}
+              className={`drop-zone ${edge} ${dragEdge === edge ? "nearest" : ""}`}
+            />
+          ))}
+          <span
+            className={`drag-ghost ${dragPhase === "returning" ? "returning" : ""}`}
+            style={
+              {
+                "--ghost-x": `${ghost.x}px`,
+                "--ghost-y": `${ghost.y}px`,
+              } as React.CSSProperties
+            }
+          >
+            <MicGlyph className="drag-ghost-icon" />
+          </span>
+        </div>
+      )}
+
+      <section className="flowbar-stage">
+        {state === "streaming" && hasStreamText && (
+          <div className="live-transcript" aria-live="polite">
+            <span>{streamText.committed}</span>{" "}
+            <span className="tentative">{streamText.tentative}</span>
+          </div>
+        )}
+        {state === "notice" && notice ? (
+          <aside
+            className="overlay-notice"
+            role="alert"
+            onMouseEnter={clearNoticeTimer}
+            onMouseLeave={armNoticeTimer}
+          >
+            <span className="notice-mark" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 12 12">
+                <circle cx="6" cy="6" r="4.75" />
+                <path d="M6 5.25v3M6 3.5v.1" />
+              </svg>
+            </span>
+            <div className="notice-copy">
+              <strong>{notice.title}</strong>
+              <p>{notice.body}</p>
+            </div>
+            <button
+              className="notice-close"
+              type="button"
+              aria-label={t("common.close")}
+              onClick={dismissNotice}
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                aria-hidden="true"
               >
-                <p>
-                  {loadingNotice && (
-                    <span className="sloading">
-                      {t("overlay.loadingModel")}
-                    </span>
-                  )}
-                  {noticeText && <span className="ndetail">{noticeText}</span>}
-                  <span className="committed">
-                    {streamText.committed ? streamText.committed + " " : ""}
-                  </span>
-                  <span className="tentative">{streamText.tentative}</span>
-                  {/* Drop the blinking caret once finalizing — it's no longer
-                      capturing, and a static spinner conveys the work. */}
-                  {!working && !loadingNotice && !liveNotice && (
-                    <span className="scaret" />
-                  )}
-                </p>
+                <path d="M2 2 10 10M10 2 2 10" />
+              </svg>
+            </button>
+          </aside>
+        ) : state === "paste-recovery" ? (
+          <aside
+            className="paste-recovery"
+            role="alert"
+            onMouseEnter={clearRecoveryTimer}
+            onMouseLeave={() => armRecoveryTimer()}
+          >
+            <button
+              className="recovery-close"
+              type="button"
+              aria-label={t("common.close")}
+              onClick={dismissRecovery}
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                aria-hidden="true"
+              >
+                <path d="M2 2 10 10M10 2 2 10" />
+              </svg>
+            </button>
+            <div className="recovery-hint">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                aria-hidden="true"
+              >
+                <rect x="2" y="3" width="12" height="10" rx="2" />
+                <path d="M5 6h6M5 9h4" />
+              </svg>
+              <span>
+                {t("overlay.pasteRecoveryHint", {
+                  defaultValue: "Select a text field before dictating",
+                })}
+              </span>
+            </div>
+            <p className="recovery-text">{pasteRecoveryText}</p>
+            <button
+              className={`recovery-copy ${recoveryCopied ? "copied" : ""}`}
+              type="button"
+              disabled={recoveryCopied}
+              onClick={() => void copyRecoveryText()}
+            >
+              {recoveryCopied
+                ? t("overlay.pasteRecoveryCopied", {
+                    defaultValue: "Copied",
+                  })
+                : t("overlay.pasteRecoveryCopy", {
+                    defaultValue: "Copy dictation",
+                  })}
+            </button>
+          </aside>
+        ) : (
+          <div
+            className="hot-area"
+            onPointerDown={handlePointerDown}
+            onPointerMove={(event) => void handlePointerMove(event)}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={() => {
+              if (dragStartedRef.current || dragArmingRef.current) {
+                void commands.finishOverlayDrag(position);
+              }
+              setDragPhase("idle");
+              resetDrag();
+            }}
+            onPointerEnter={handleBarPointerEnter}
+            onPointerLeave={handleBarPointerLeave}
+            onClick={handleBarClick}
+          >
+            <div
+              className={`thought-bubble ${displayState} ${isWorking ? "working" : ""}`}
+              role={state === "resting" ? "button" : "status"}
+              tabIndex={state === "resting" ? 0 : -1}
+              onFocus={() => showTooltip("dictate", BUBBLE_TOOLTIP_DELAY_MS)}
+              onBlur={hideTooltip}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ")
+                  handleBarClick();
+              }}
+            >
+              <div className="bubble-row">
+                {displayState === "ready" && <MicGlyph className="ready-mic" />}
+                {hasToggleControls && (
+                  <button
+                    className="flow-action cancel visible"
+                    aria-label={t("common.close")}
+                    onMouseEnter={() =>
+                      showTooltip("cancel", ACTION_TOOLTIP_DELAY_MS)
+                    }
+                    onMouseLeave={hideTooltip}
+                    onFocus={() =>
+                      showTooltip("cancel", ACTION_TOOLTIP_DELAY_MS)
+                    }
+                    onBlur={hideTooltip}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void commands.cancelOperation();
+                    }}
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 12 12"
+                      aria-hidden="true"
+                    >
+                      <path d="M2 2 10 10M10 2 2 10" />
+                    </svg>
+                  </button>
+                )}
+                {(isListening || isWorking || state === "error") && waveform}
+                {hasToggleControls && (
+                  <button
+                    className="flow-action finish visible"
+                    aria-label={t("overlay.finishAndPaste", {
+                      defaultValue: "Finish and paste",
+                    })}
+                    onMouseEnter={() =>
+                      showTooltip("finish", ACTION_TOOLTIP_DELAY_MS)
+                    }
+                    onMouseLeave={hideTooltip}
+                    onFocus={() =>
+                      showTooltip("finish", ACTION_TOOLTIP_DELAY_MS)
+                    }
+                    onBlur={hideTooltip}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void commands.toggleOverlayDictation();
+                    }}
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 12 12"
+                      aria-hidden="true"
+                    >
+                      <rect x="2" y="2" width="8" height="8" rx="1.25" />
+                    </svg>
+                  </button>
+                )}
+                {isWorking && loader}
               </div>
             </div>
           </div>
-          {liveNotice
-            ? noticeRow
-            : working
-              ? workingRow(
-                  workKind === "polishing"
-                    ? t("overlay.processing")
-                    : transcribingLabel,
-                  true,
-                )
-              : listeningRow(open, true)}
-        </div>
-      </div>
-    );
-  }
-
-  // ---- Minimal overlay: exactly one row at a time — waveform (recording), or a
-  // spinner + label (transcribing / processing). Never both. The pill animates its
-  // width between them; the cancel button is in both rows so it stays put.
-  const working = state === "transcribing" || state === "processing";
-  const workLabel =
-    state === "processing" ? t("overlay.processing") : transcribingLabel;
-
-  return (
-    <div
-      dir={direction}
-      className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
-    >
-      {noticeProbe}
-      <div
-        className={`scard compact ${working && isVisible ? "cworking" : ""} ${noticeClass}`}
-        style={shownNotice ? { width: noticeWidth } : undefined}
-        onClick={dismissNotice}
-      >
-        {shownNotice
-          ? noticeRow
-          : working
-            ? workingRow(workLabel, true)
-            : listeningRow(false, true)}
-      </div>
-    </div>
+        )}
+      </section>
+    </main>
   );
 };
 

@@ -5,6 +5,7 @@ import { PlayIcon } from "lucide-react";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useSettings } from "../../hooks/useSettings";
+import type { SoundTheme } from "@/bindings";
 
 interface SoundPickerProps {
   label: string;
@@ -22,13 +23,14 @@ export const SoundPicker: React.FC<SoundPickerProps> = ({
     (state) => state.checkCustomSounds,
   );
 
-  const selectedTheme = getSetting("sound_theme") ?? "marimba";
+  const selectedTheme = getSetting("sound_theme") ?? "shivir";
 
   useEffect(() => {
     checkCustomSounds();
   }, [checkCustomSounds]);
 
   const options: DropdownOption[] = [
+    { value: "shivir", label: "Shivir" },
     { value: "marimba", label: "Marimba" },
     { value: "pop", label: "Pop" },
   ];
@@ -54,7 +56,7 @@ export const SoundPicker: React.FC<SoundPickerProps> = ({
         <Dropdown
           selectedValue={selectedTheme}
           onSelect={(value) =>
-            updateSetting("sound_theme", value as "marimba" | "pop" | "custom")
+            updateSetting("sound_theme", value as SoundTheme)
           }
           options={options}
           onOpen={checkCustomSounds}
