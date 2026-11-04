@@ -1,0 +1,998 @@
+{
+  "tray": {
+    "settings": "Sozlamalar...",
+    "checkUpdates": "Yangilanishni tekshirish...",
+    "copyLastTranscript": "Oxirgi matndan nusxa olish",
+    "unloadModel": "Modelni yuklamaslik",
+    "model": "Model",
+    "quit": "Chiqish",
+    "cancel": "Bekor qilish",
+    "secureInputWarning": "⚠ Tezkor tugmalarni Secure Input bloklamoqda",
+    "language": "Til",
+    "autoLanguage": "Avto",
+    "otherLanguages": "Boshqa tillar"
+  },
+  "sidebar": {
+    "general": "Umumiy",
+    "models": "Modellar",
+    "advanced": "Qoʻshimcha",
+    "postProcessing": "Qayta ishlash",
+    "history": "Tarix",
+    "debug": "Nosozliklarni tuzatish",
+    "about": "Dastur haqida"
+  },
+  "onboarding": {
+    "customModelDescription": "Rasman qoʻllab-quvvatlanmaydi",
+    "migration": {
+      "title": "Modellaringizni yangilash kerak",
+      "description": "Shivir endi modelning yangi turidan foydalanadi. Matnga aylantirishni davom ettirish uchun yangi versiyani yuklab oling. Eski versiyalar oʻchiriladi.",
+      "replaces": "{{name}} oʻrniga",
+      "oldFormat": "Eski format",
+      "failed": "Yuklab olib boʻlmadi",
+      "retry": "Qayta urinish",
+      "chooseAnother": "Boshqa model tanlash",
+      "download": "Modellarni yuklab olish ({{size}})",
+      "continue": "Davom etish"
+    },
+    "models": {
+      "small": {
+        "name": "Whisper Small",
+        "description": "Tez va yetarlicha aniq."
+      },
+      "medium": {
+        "name": "Whisper Medium",
+        "description": "Yaxshi aniqlik, oʻrtacha tezlik"
+      },
+      "turbo": {
+        "name": "Whisper Turbo",
+        "description": "Aniqlik va tezlik muvozanatda."
+      },
+      "large": {
+        "name": "Whisper Large",
+        "description": "Yaxshi aniqlik, lekin sekin."
+      },
+      "breeze-asr": {
+        "name": "Breeze ASR",
+        "description": "Tayvan mandarin tiliga moslashtirilgan. Tillarni almashtirib gapirishni qoʻllaydi."
+      }
+    },
+    "errors": {
+      "selectModel": "Modelni tanlab boʻlmadi"
+    },
+    "permissions": {
+      "microphone": {
+        "name": "Mikrofon",
+        "why": "Shivir sizni eshitishi uchun. Ovoz shu kompyuterning oʻzida matnga aylantiriladi va hech qachon yuklanmaydi."
+      },
+      "accessibility": {
+        "name": "Maxsus imkoniyatlar (Accessibility)",
+        "why": "Tezkor tugmangiz har bir ilovada ishlashi va Shivir matnni kursor turgan joyga yoza olishi uchun."
+      },
+      "errors": {
+        "checkFailed": "Ruxsatlarni tekshirib boʻlmadi. Qayta urinib koʻring.",
+        "requestFailed": "Ruxsat soʻrab boʻlmadi. Qayta urinib koʻring."
+      },
+      "titleMac": "Ikkita ruxsat, va tayyor",
+      "titleWindows": "Bitta ruxsat, va tayyor",
+      "subtitleMac": "macOS har qanday ilovaga tinglash yoki yozishdan oldin ruxsat soʻraydi.",
+      "subtitleWindows": "Windows har qanday ilovaga tinglashdan oldin ruxsat soʻraydi.",
+      "allow": "Ruxsat berish",
+      "openSettings": "Sozlamalarni ochish",
+      "allowed": "Ruxsat berilgan",
+      "waiting": "Kutilmoqda",
+      "turnOnMac": "Tizim sozlamalarida Shivirni yoqing, soʻng shu yerga qayting.",
+      "turnOnWindows": "Windows sozlamalarida mikrofonga ruxsatni yoqing, soʻng shu yerga qayting.",
+      "hintBoth": "Davom etish uchun ikkalasiga ruxsat bering",
+      "hintMicrophone": "Davom etish uchun mikrofonga ruxsat bering",
+      "welcomeBack": "Xush kelibsiz. Toʻxtagan joyingizdan davom etamiz.",
+      "relaunch": "Shundan keyin tezkor tugma ishlamayaptimi? <relaunch>Shivirni qayta ishga tushiring</relaunch>, shu yerga qaytib kelasiz."
+    },
+    "shell": {
+      "back": "Orqaga",
+      "continue": "Davom etish",
+      "progress": "{{step}}-qadam, jami {{count}} ta"
+    },
+    "welcome": {
+      "title": "Yozmang, gapiring: istalgan ilovada",
+      "subtitle": "Diktovka qiladigan tillaringizni tanlang",
+      "languagesLabel": "Tillar",
+      "noMatch": "“{{query}}” degan til topilmadi. Shivir modellari taxminan 100 ta tilni qamrab oladi; qolganlari sozlamalarda.",
+      "appLanguage": "Ilova tili",
+      "menusIn": "Menyular: <b>{{language}}</b>",
+      "chinese": {
+        "question": "Siz {{languages}} tilida gapirasiz. Shivir qaysi yozuvda yozsin?",
+        "label": "Xitoy iyeroglifi",
+        "zh-Hans": "Soddalashtirilgan",
+        "zh-Hant": "Tayvan",
+        "zh-HK": "Gonkong"
+      },
+      "hint": {
+        "pickOne": "Kamida bitta til tanlang",
+        "weak_one": "{{languages}}: hozircha hech bir model yaxshi eshitmaydi",
+        "weak_other": "{{languages}}: hozircha hech bir model bularni yaxshi eshitmaydi"
+      }
+    },
+    "download": {
+      "checking": "Yuklab olingan fayl tekshirilmoqda…",
+      "ready": "{{name}} tayyor",
+      "failed": "Yuklab olish toʻxtadi",
+      "downloading": "{{name}} yuklab olinmoqda",
+      "progress": "{{done}} / {{total}}",
+      "progressLeft": "{{done}} / {{total}}, {{time}} qoldi",
+      "checkingName": "{{name}} tekshirilmoqda",
+      "checkingDetail": "Yuklab olish toʻliq tugaganiga ishonch hosil qilinmoqda",
+      "stopped": "{{name}} yuklab olinishi toʻxtadi",
+      "retryDetail": "Qayta urinish toʻxtagan joyidan davom etadi",
+      "retryDownload": "Yuklashni qayta urish",
+      "cardProgress": "Yuklab olinmoqda: {{percent}}%, {{done}} / {{total}}",
+      "timeLeft": "{{time}} qoldi",
+      "speedLeft": "{{speed}}, {{time}} qoldi"
+    },
+    "model": {
+      "title": "Nutq modelini tanlang",
+      "subtitle": "Nutq modeli gapingizni shu kompyuterning oʻzida matnga aylantiradi",
+      "label": "Nutq modeli",
+      "lines": {
+        "recommended": "Tillaringiz uchun tezlik va aniqlikning eng yaxshi muvozanati",
+        "faster": "Tezroq, lekin xatolar bir oz koʻproq",
+        "accurate": "Eng kam xato, lekin sekinroq"
+      },
+      "shorts": {
+        "recommended": "Siz uchun eng yaxshisi",
+        "faster": "Tezroq, xatolar bir oz koʻp",
+        "accurate": "Eng kam xato, lekin sekinroq"
+      },
+      "model": "Model",
+      "showAll": "Barcha {{count}} ta modelni koʻrsatish",
+      "download": "Yuklab olish: {{size}}",
+      "downloadInstead": "Oʻrniga yuklab olish: {{size}}",
+      "pauses": "{{name}} {{percent}}% da toʻxtaydi",
+      "resumeLater": "Toʻxtagan joyidan davom etish uchun yana tanlang",
+      "hint": "Sozlash tugaguncha yuklab olinadi"
+    },
+    "demo": {
+      "title": "Istalgan ilovada bitta tezkor tugma bilan gapiring",
+      "hold": "<0>Yozmoqchi boʻlgan joyingizni bosing.</0> <1>Tezkor tugmani bosib turib gapiring.</1> <2>Qoʻyib yuboring, soʻzlaringiz paydo boʻladi.</2>",
+      "tap": "<0>Yozmoqchi boʻlgan joyingizni bosing.</0> <1>Tezkor tugmani bosing va gapiring.</1> <2>Yana bosing, soʻzlaringiz paydo boʻladi.</2>",
+      "apps": {
+        "messages": "Xabarlar",
+        "notes": "Qaydlar"
+      },
+      "chat": "Bugun kechqurun baribir kelasanmi?",
+      "noteTitle": "Dam olish kunlari rejasi",
+      "screenLabel": "Noutbuk: kimdir ilovada yozish joyini bosadi, tezkor tugmani bosib gapiradi va soʻzlar bosilgan joyda paydo boʻladi.",
+      "change": "Oʻzgartirish",
+      "yourShortcut": "Tezkor tugmangiz:",
+      "pressKeys": "Yangi tugmalarni bosing",
+      "addKey": "Endi yana bir tugma qoʻshing",
+      "cancel": "Bekor qilish",
+      "tryIt": "Oʻzingiz sinab koʻring"
+    },
+    "try": {
+      "title": "Sinab koʻring!",
+      "subtitle": "Shivir burchakda, sizga yoʻl koʻrsatadi",
+      "noteLabel": "Qayd",
+      "placeholder": "Yangi qayd",
+      "hold": "<keys/> tugmasini bosib turing va gapiring.",
+      "tapNext": "Endi <keys/> tugmasini bir marta bosing va gapiring.",
+      "letGo": "Tugagach, <keys/> tugmasini qoʻyib yuboring.",
+      "tapAgain": "Tugagach, <keys/> tugmasini yana bosing.",
+      "watch": "Qaydga qarang.",
+      "changeKeys": "Tezkor tugmani oʻzgartirish, {{keys}}",
+      "doneHold": "Barakalla! Bu bosib turib gapirish.",
+      "doneHoldNext": "Endi qoʻl tegizmasdan gapirish.",
+      "doneTap": "Ajoyib! Bu bosib gapirish.",
+      "doneTapNext": "Endi gapirayotganda tugmalarni bosib turing.",
+      "giveFive": "Uddaladingiz! Qoʻl bering",
+      "highFive": "Qoʻl bering",
+      "slowLine": "{{name}} shu kompyuterda {{wait}} vaqt oldi. <faster>Tezroq modelni sinang</faster>",
+      "nothingTyped": "Hm, hech narsa yozilmadi.",
+      "nothingTypedSub": "Avval qaydni bosing, soʻng qayta urinib koʻring.",
+      "silent": "Hech narsa eshitmadim.",
+      "silentSub": "Bu mikrofondan tovush kelmadi. Boshqasini sinang:",
+      "noWords": "Birorta soʻzni tushunmadim.",
+      "noWordsSub": "Qayta urinib koʻring va toʻliq gap ayting.",
+      "finish": "Tugatish",
+      "skip": "Oʻtkazib yuborish",
+      "seconds": "{{value}} s"
+    },
+    "done": {
+      "title": "Hammasi tayyor",
+      "subMac": "Shivir endi menyu qatorida. Istalgan ilovada gapirish uchun <keys/> tugmasini bosing yoki bosib turing.",
+      "subTray": "Shivir endi tizim treyida. Istalgan ilovada gapirish uchun <keys/> tugmasini bosing yoki bosib turing.",
+      "hint": "Buni keyinroq Sozlamalarda oʻzgartirishingiz mumkin",
+      "highFiveLabel": "Qoʻl bering",
+      "atLogin": "Tizimga kirganimda Shivirni ishga tushirish",
+      "finish": "Tayyor",
+      "panel": {
+        "name": "Shivir",
+        "ready": "Tayyor",
+        "languages": "Tillar",
+        "model": "Nutq modeli",
+        "shortcut": "Tezkor tugma",
+        "changeLanguages": "Tillarni oʻzgartirish, {{languages}}",
+        "changeModel": "Nutq modelini oʻzgartirish, {{model}}"
+      }
+    },
+    "linux": {
+      "tryIt": "Ishlamayaptimi? <guide>Linux uchun sozlash qoʻllanmasi</guide>",
+      "done": "Boshqa ilovalarda ishlamayaptimi? <guide>Linux uchun sozlash qoʻllanmasi</guide>"
+    }
+  },
+  "modelTable": {
+    "tags": {
+      "preview": "Jonli koʻrinish",
+      "previewTitle": "Gapirayotganingizda soʻzlaringizni Live panelida koʻrsatadi, toʻxtaganingizda esa yozib qoʻyadi",
+      "translate": "Tarjima qiladi",
+      "translateTitle": "Aytganingizni inglizcha matnga aylantira oladi. Sozlamalarda yoqing"
+    },
+    "rubric": {
+      "gradeTitle": "{{language}} aniqligi: {{grade}}",
+      "accuracyTitle": "{{language}} aniqligi",
+      "overallTitle": "Tillaringizdagi aniqlik: {{grade}}",
+      "overall": "Tillaringizdagi aniqlik",
+      "meaning": {
+        "A": "Juda kam xato: soʻzlaringiz odatda aytganingizdek chiqadi",
+        "B": "Ayrim xatolar: u yer-bu yerdagi soʻzni tuzatishga toʻgʻri keladi",
+        "C": "Tez-tez xato: ayrim tafsilotlar yoʻqolishi mumkin",
+        "D": "Koʻp xato: yozilganini tekshirib, tuzatishga toʻgʻri keladi",
+        "F": "Koʻpincha tushunarsiz: aytganlaringizning katta qismi notoʻgʻri chiqishi mumkin"
+      },
+      "unsupported": "Bu model {{language}} tilini tushunmaydi, shuning uchun uni yoza olmaydi",
+      "unrated": "Bu model {{language}} tilini tushunadi, lekin qanchalik yaxshiligini hali oʻlchamaganmiz",
+      "under": "{{max}}% dan kam",
+      "between": "{{min}} dan {{max}}% gacha",
+      "over": "{{min}}% va undan koʻp",
+      "speedTitle": "Tezlik: {{speed}}",
+      "speedName": {
+        "0": "Juda sekin",
+        "1": "Sekin",
+        "2": "Oʻrtacha",
+        "3": "Tez",
+        "4": "Juda tez"
+      },
+      "speedMeaning": {
+        "0": "Soʻzlaringiz uzoq kutishdan keyin paydo boʻladi",
+        "1": "Soʻzlaringiz kutishdan keyin paydo boʻladi",
+        "2": "Soʻzlaringiz qisqa kutishdan keyin paydo boʻladi",
+        "3": "Soʻzlaringiz deyarli darrov paydo boʻladi",
+        "4": "Soʻzlaringiz darrov paydo boʻladi"
+      },
+      "speedPreview": "{{meaning}}, gapirayotganda jonli koʻrinish bilan",
+      "untimed": "Qanchalik tezligini hali oʻlchamaganmiz",
+      "underSeconds": "{{max}} s dan kam",
+      "betweenSeconds": "{{min}} dan {{max}} s gacha",
+      "overSeconds": "{{min}} s va undan koʻp"
+    },
+    "roles": {
+      "recommended": "Tavsiya etiladi",
+      "faster": "Tezroq",
+      "accurate": "Aniqroq",
+      "fromAll": "Barcha modellardan"
+    },
+    "speed": "Tezlik",
+    "size": "Hajmi",
+    "accuracy": "Aniqlik",
+    "search": "Modellarni qidirish",
+    "allLabel": "Nutq modellari",
+    "noMatch": "“{{query}}” boʻyicha hech narsa topilmadi. Til yoki Whisper, Parakeet kabi oilani sinab koʻring",
+    "noFilterMatch": "Bu filtrlarga mos model yoʻq",
+    "speedUntested": "Tezligi hali oʻlchanmagan",
+    "speedWords": {
+      "0": "Juda sekin, soʻzlar uzoq kutishdan keyin paydo boʻladi",
+      "1": "Sekin, soʻzlar kutishdan keyin paydo boʻladi",
+      "2": "Oʻrtacha, soʻzlar qisqa kutishdan keyin paydo boʻladi",
+      "3": "Tez, soʻzlar deyarli darrov paydo boʻladi",
+      "4": "Juda tez, soʻzlar darrov paydo boʻladi"
+    },
+    "speedWordsPreview": {
+      "0": "Juda sekin, gapirayotganda jonli koʻrinish bilan",
+      "1": "Sekin, gapirayotganda jonli koʻrinish bilan",
+      "2": "Oʻrtacha, gapirayotganda jonli koʻrinish bilan",
+      "3": "Tez, gapirayotganda jonli koʻrinish bilan",
+      "4": "Juda tez, gapirayotganda jonli koʻrinish bilan"
+    },
+    "missingLanguage": "Tilingiz yoʻqmi?",
+    "allLanguages": "Barchasi",
+    "downloadingLine": "Yuklab olinmoqda: {{percent}}%, jami {{total}}",
+    "customLine": "Modellar jildidan qoʻshilgan. Baholanmagan.",
+    "legacyLine": "Eskiroq yuklama. Baholanmagan."
+  },
+  "languagePicker": {
+    "search": "Tillarni qidirish",
+    "addAnother": "Yana qoʻshish",
+    "remove": "{{language}} tilini olib tashlash",
+    "alreadyAdded_one": "{{languages}} allaqachon qoʻshilgan.",
+    "alreadyAdded_other": "{{languages}} allaqachon qoʻshilgan."
+  },
+  "modelSelector": {
+    "custom": "Maxsus",
+    "streaming": "Oqimli",
+    "active": "Faol",
+    "noModelsAvailable": "Modellar yoʻq",
+    "verifying": "{{modelName}} tekshirilmoqda...",
+    "verifyingGeneric": "Tekshirilmoqda...",
+    "downloading": "Yuklab olinmoqda: {{percentage}}%",
+    "downloadingMultiple": "{{count}} ta model yuklab olinmoqda...",
+    "modelReady": "Model tayyor",
+    "loading": "{{modelName}} yuklanmoqda...",
+    "loadingGeneric": "Yuklanmoqda...",
+    "modelError": "Model xatosi",
+    "modelUnloaded": "Model yuklanmagan",
+    "noModelDownloadRequired": "Model yoʻq: yuklab olish kerak",
+    "downloadSpeed": "{{speed}} MB/s",
+    "lockedWhileTranscribing": "Tarix matnga aylantirishni tugatgach, modelni almashtirishingiz mumkin."
+  },
+  "settings": {
+    "modelSettings": {
+      "title": "{{model}} sozlamalari"
+    },
+    "general": {
+      "title": "Umumiy",
+      "shortcut": {
+        "title": "Shivir tezkor tugmalari",
+        "description": "Ovoz yozishni boshlash uchun tezkor tugmalarni sozlang",
+        "loading": "Tezkor tugmalar yuklanmoqda...",
+        "none": "Tezkor tugmalar sozlanmagan",
+        "notFound": "Tezkor tugma topilmadi",
+        "pressKeys": "Tugmalarni bosing...",
+        "bindings": {
+          "transcribe": {
+            "name": "Matnga aylantirish tugmasi",
+            "description": "Ovozingizni yozib, matnga aylantirish uchun tezkor tugma."
+          },
+          "cancel": {
+            "name": "Bekor qilish tugmasi",
+            "description": "Joriy yozuvni bekor qilish uchun tezkor tugma."
+          },
+          "transcribe_with_post_process": {
+            "name": "Qayta ishlash tugmasi",
+            "description": "Ixtiyoriy: matningizga har doim sunʼiy intellekt bilan qayta ishlashni qoʻllaydigan alohida tezkor tugma."
+          }
+        },
+        "errors": {
+          "set": "Tezkor tugmani oʻrnatib boʻlmadi: {{error}}"
+        }
+      },
+      "language": {
+        "title": "Til",
+        "description": "Nutqni aniqlash tilini tanlang. Avto tilni oʻzi aniqlaydi, aniq tilni tanlash esa shu til uchun aniqlikni oshirishi mumkin.",
+        "searchPlaceholder": "Tillarni qidirish...",
+        "noResults": "Til topilmadi",
+        "auto": "Avto",
+        "autoUnavailable": {
+          "title": "Avto oʻchirilgan",
+          "oneLanguage": "Tillaringizdan faqat bittasi bu model bilan ishlaydi",
+          "undetectable": "{{languages}} bilan mavjud emas",
+          "noMatch": "Tillaringizdan hech biri bu model bilan ishlamaydi"
+        },
+        "detectorMissingTitle": "Avto uchun alohida yuklab olish kerak",
+        "detectorMissing": "Bu model qaysi tilda gapirayotganingizni ajrata olmaydi. Avto uchun kichik til aniqlagich kerak",
+        "stopDetectorDownload": "Til aniqlagichni yuklab olishni toʻxtatish"
+      },
+      "preferredLanguages": {
+        "title": "Asosiy tillar",
+        "description": "Siz gapiradigan tillar. Shivir ulardan modellarni tavsiya qilish uchun foydalanadi.",
+        "noMatch": "“{{query}}” degan til topilmadi",
+        "weak": "Hozircha hech bir model {{languages}} tilini yaxshi taniy olmaydi."
+      },
+      "shortcutActivation": {
+        "title": "Tezkor tugma rejimi",
+        "description": "Matnga aylantirish tugmasi yozuvni qanday boshlashi va toʻxtatishini tanlang.",
+        "options": {
+          "holdOrToggle": "Avto",
+          "pushToTalk": "Bosib turish",
+          "toggle": "Yoqish/oʻchirish"
+        },
+        "descriptions": {
+          "hold_or_toggle": "Yozish uchun bosib turing yoki bir marta bosing",
+          "push_to_talk": "Tugmani bosib turganingizda yozadi",
+          "toggle": "Yozishni boshlash uchun tugmani bosing, toʻxtatish uchun yana bosing"
+        }
+      }
+    },
+    "models": {
+      "title": "Modellar",
+      "changeLanguages": "Tillarni oʻzgartirish",
+      "sections": {
+        "yours": "Shu kompyuterda",
+        "fits": "Tillaringiz uchun",
+        "untested": "Sinalmagan"
+      },
+      "untestedNote": "Shivir bilan sinalmagan. Sekinroq ishlashi yoki koʻproq xato qilishi mumkin.",
+      "untestedHidden_one": "Yana {{count}} ta model diktovka uchun moslanmagan. Topish uchun qidiring.",
+      "untestedHidden_other": "Yana {{count}} ta model diktovka uchun moslanmagan. Topish uchun qidiring.",
+      "emptyYours": "Hozircha model yoʻq. Quyidan birini tanlang: u yuklab olinadi, soʻng Shivir undan foydalanadi.",
+      "showMore": "Yana {{count}} tasini koʻrsatish",
+      "showFewer": "Kamroq koʻrsatish",
+      "download": "Yuklab olish va ishlatish",
+      "downloadingThenUse": "{{percent}}%, jami {{total}}, soʻng oʻtadi",
+      "loading": "Yuklanmoqda…",
+      "deleteAsk": "{{name}} oʻchirilsinmi? {{size}} joy boʻshaydi.",
+      "deleteAskActive": "{{name}} oʻchirilsinmi? Boshqasini tanlamaguningizcha Shivir matnga aylantira olmaydi.",
+      "cancel": "Bekor qilish",
+      "deleteModel": "{{name}} modelini oʻchirish",
+      "cancelDownload": "{{name}} yuklab olinishini toʻxtatish",
+      "legend": {
+        "open": "Modellar qanday baholanadi",
+        "accuracyNote": "Har bir tilingiz uchun: model sinov yozuvlarimizda nechta soʻzni xato yozgan.",
+        "speedNote": {
+          "accelerated": "30 soniyalik nutqni yozib chiqish sinov noutbukimizning grafik chipida qancha vaqt oladi. Bu kompyuterda boshqacha boʻlishi mumkin.",
+          "cpu": "30 soniyalik nutqni yozib chiqish sinov noutbukimizning protsessorida qancha vaqt oladi. Bu kompyuterda boshqacha boʻlishi mumkin."
+        },
+        "marks": "? hali oʻlchanmagan. — bu tilni eshitmaydi."
+      },
+      "retiredNotice": {
+        "title": "Eski modellar endi Shivir bilan ishlamaydi",
+        "description": "Ular kompyuteringizda {{size}} joy egallab turibdi.",
+        "delete": "Modellarni oʻchirish",
+        "deleteFailed": "Ayrim eski modellarni oʻchirib boʻlmadi. Tafsilotlar uchun jurnalni tekshiring."
+      },
+      "rescan": {
+        "label": "Qayta skanerlash",
+        "tooltip": "Shivirdan tashqari modellar jildiga yoki Hugging Face keshiga qoʻshilgan modellarni qayta qidirish"
+      }
+    },
+    "languages": {
+      "title": "Tillar"
+    },
+    "sound": {
+      "title": "Tovush",
+      "microphone": {
+        "title": "Mikrofon",
+        "description": "Kerakli mikrofon qurilmasini tanlang",
+        "placeholder": "Mikrofonni tanlang...",
+        "loading": "Yuklanmoqda..."
+      },
+      "channel": {
+        "title": "Kirish kanali",
+        "description": "Qaysi kirish kanalidan yozishni tanlang. Audio interfeysingizda bir nechta kirish boʻlsa, shundan foydalaning.",
+        "average": "Barcha kanallar oʻrtachasi",
+        "channel": "{{n}}-kanal"
+      },
+      "audioFeedback": {
+        "label": "Tovushli signal",
+        "description": "Yozuv boshlanganda va tugaganda tovush chalish"
+      },
+      "outputDevice": {
+        "title": "Chiqish qurilmasi",
+        "description": "Signal tovushlari uchun kerakli audio chiqish qurilmasini tanlang",
+        "placeholder": "Chiqish qurilmasini tanlang...",
+        "loading": "Yuklanmoqda..."
+      },
+      "volume": {
+        "title": "Ovoz balandligi",
+        "description": "Signal tovushlarining balandligini sozlang"
+      }
+    },
+    "advanced": {
+      "groups": {
+        "app": "Ilova",
+        "output": "Natija",
+        "transcription": "Matnga aylantirish",
+        "history": "Tarix",
+        "experimental": "Eksperimental"
+      },
+      "experimentalToggle": {
+        "label": "Eksperimental imkoniyatlar",
+        "description": "Hali ishlab chiqilayotgan eksperimental imkoniyatlarni yoqish."
+      },
+      "lazyStreamClose": {
+        "label": "Mikrofonni matnlar orasida ochiq saqlash",
+        "description": "Yozuv tugagandan keyin mikrofon oqimini 30 soniya ochiq saqlaydi, ketma-ket matnga aylantirishda kechikishni kamaytiradi. Faol paytda Bluetooth tovush sifatini pasaytirishi mumkin."
+      },
+      "airpodsMode": {
+        "label": "AirPods rejimi",
+        "description": "iPhone ovoz chalayotganda AirPodsni matnga aylantirish uchun avtomatik Mac ga ulaydi. Busiz yozuvlar jim chiqishi mumkin."
+      },
+      "acceleration": {
+        "transcribe": {
+          "title": "Apparat tezlashtirish",
+          "description": "Matnga aylantirish uchun ishlatiladigan qurilmani tanlang. Avto imkon boʻlsa GPU dan foydalanadi, aks holda CPU ga oʻtadi."
+        },
+        "gpuDevice": {
+          "auto": "Avto"
+        }
+      },
+      "startHidden": {
+        "label": "Yashirin ishga tushirish",
+        "description": "Oynani ochmasdan tizim treyiga ishga tushirish."
+      },
+      "autostart": {
+        "label": "Tizim yoqilganda ishga tushirish",
+        "description": "Kompyuterga kirganingizda Shivirni avtomatik ishga tushirish."
+      },
+      "showTrayIcon": {
+        "label": "Trey belgisini koʻrsatish",
+        "description": "Shivir belgisini tizim treyida koʻrsatish."
+      },
+      "overlay": {
+        "style": {
+          "title": "Panel",
+          "description": "Yozuv panelini tanlang: Yoʻq uni yashiradi, Minimal ixcham kapsulani koʻrsatadi, Live esa gapirayotganingizda matnni real vaqtda koʻrsatadi (faqat oqimli modellarda — model tanlagichdagi Oqimli belgisiga qarang). Linuxda “Yoʻq” tavsiya etiladi.",
+          "options": {
+            "none": "Yoʻq",
+            "minimal": "Minimal",
+            "live": "Live"
+          }
+        },
+        "position": {
+          "title": "Panel joylashuvi",
+          "description": "Doimiy Flow Bar panelini ekranning pastki, chap yoki oʻng chetiga joylashtiring.",
+          "options": {
+            "bottom": "Pastda",
+            "left": "Chapda",
+            "right": "Oʻngda"
+          }
+        }
+      },
+      "pasteMethod": {
+        "title": "Qoʻyish usuli",
+        "description": "Matn qanday kiritilishini tanlang. Toʻgʻridan-toʻgʻri: tizim kiritishi orqali yozishni taqlid qiladi. Yoʻq: qoʻymaydi, faqat tarix/buferni yangilaydi.",
+        "options": {
+          "clipboard": "Bufer ({{modifier}}+V)",
+          "clipboardCtrlShiftV": "Bufer (Ctrl+Shift+V)",
+          "clipboardShiftInsert": "Bufer (Shift+Insert)",
+          "direct": "Toʻgʻridan-toʻgʻri",
+          "none": "Yoʻq",
+          "externalScript": "Tashqi skript"
+        },
+        "externalScriptPlaceholder": "/path/to/your/script.sh"
+      },
+      "typingTool": {
+        "title": "Yozish vositasi",
+        "description": "Toʻgʻridan-toʻgʻri qoʻyish usuli uchun qaysi Linux yozish vositasidan foydalanishni tanlang. Avto tizimingizdagi eng yaxshi vositani oʻzi aniqlaydi va ishlatadi.",
+        "options": {
+          "auto": "Avto (tavsiya etiladi)"
+        }
+      },
+      "clipboardHandling": {
+        "title": "Buferdan foydalanish",
+        "description": "Buferni oʻzgartirmaslik matnga aylantirishdan keyin buferdagi joriy narsani saqlab qoladi. Buferga nusxa olish qoʻyilgandan keyin natijani buferda qoldiradi.",
+        "options": {
+          "dontModify": "Buferni oʻzgartirmaslik",
+          "copyToClipboard": "Buferga nusxa olish"
+        }
+      },
+      "autoSubmit": {
+        "title": "Avtomatik yuborish",
+        "description": "Matn kiritilgandan keyin tanlangan tugmalar birikmasini avtomatik yuboradi. Cmd+Enter macOS da ishlaydi, Windows/Linux da esa Super+Enter.",
+        "options": {
+          "off": "Oʻchiq",
+          "enter": "Enter",
+          "cmdEnter": "Cmd+Enter",
+          "superEnter": "Super+Enter",
+          "ctrlEnter": "Ctrl+Enter"
+        }
+      },
+      "translateToEnglish": {
+        "label": "Inglizchaga tarjima qilish",
+        "description": "Matnga aylantirish paytida boshqa tillardagi nutqni avtomatik inglizchaga tarjima qiladi."
+      },
+      "modelUnload": {
+        "title": "Modelni xotiradan chiqarish",
+        "description": "Model belgilangan vaqt davomida ishlatilmasa, GPU/CPU xotirasini avtomatik boʻshatadi",
+        "options": {
+          "never": "Hech qachon",
+          "immediately": "Darhol",
+          "min2": "2 daqiqadan keyin",
+          "min5": "5 daqiqadan keyin",
+          "min10": "10 daqiqadan keyin",
+          "min15": "15 daqiqadan keyin",
+          "hour1": "1 soatdan keyin",
+          "sec15": "15 soniyadan keyin (nosozliklarni tuzatish)"
+        }
+      },
+      "customWords": {
+        "title": "Maxsus soʻzlar",
+        "description": "Qoʻllab-quvvatlanadigan modellarga ismlar va maxsus atamalarni tanishga yordam bering. Noaniq tuzatish hozircha faqat A–Z harflari va raqamlardan iborat soʻzlar bilan cheklangan.",
+        "placeholder": "Soʻz qoʻshing",
+        "add": "Qoʻshish",
+        "remove": "{{word}} soʻzini olib tashlash",
+        "duplicate": "“{{word}}” allaqachon bor"
+      },
+      "voiceActivityDetection": {
+        "title": "Ovoz faolligini aniqlash",
+        "description": "Yozuvlardagi jimlikni filtrlaydi. Oqimli modellar uzunroq VAD dumidan foydalanadi; VAD oʻchirilsa, xom audio yoziladi."
+      },
+      "longFormChunking": {
+        "title": "Uzun audioni boʻlaklash",
+        "description": "Uzun yozuvlarni matnga aylantirishdan oldin pauzalarda boʻladi, bu odatda matnga aylantirish samaradorligini oshiradi. Matnga aylantirilgan fayllar va uzun qayta aylantirishlar har doim boʻlinadi."
+      },
+      "languageDetection": {
+        "title": "Avtoni mening tillarim bilan cheklash",
+        "description": "Avto faqat asosiy tillaringiz orasidan tanlaydi va kichik til aniqlagichdan foydalanadi. Avto doim siz gapirmaydigan tilni tanlayversa, buni yoqing",
+        "downloadHint": "Buni yoqsangiz, kichik til aniqlagich yuklab olinadi",
+        "downloadingHint": "Til aniqlagich yuklab olinmoqda. Bekor qilish uchun buni oʻchiring"
+      },
+      "vadBackend": {
+        "title": "Ovoz faolligi aniqlagichi",
+        "description": "Jimlikni filtrlash uchun aniqlagichni tanlang. Earshot eksperimental; nutq kesilsa yoki shovqin qolsa, Silero ga qayting.",
+        "options": {
+          "silero": "Silero",
+          "earshot": "Earshot"
+        }
+      },
+      "fillerWordRemoval": {
+        "title": "Ortiqcha soʻzlarni olib tashlash",
+        "description": "Matndan ikkilanishni bildiruvchi odatiy soʻzlarni olib tashlaydi. Saqlab qolish uchun oʻchiring."
+      },
+      "chineseScript": {
+        "title": "Xitoy yozuvi",
+        "description": "Mandarin va kanton tilidagi matnlarni soddalashtirilgan yoki Tayvan va Gonkongda qoʻllanadigan anʼanaviy iyeroglif bilan yozadi. Boshqa tillar oʻzgarmaydi.",
+        "options": {
+          "asTranscribed": "Qanday aytilsa shunday",
+          "simplified": "Soddalashtirilgan",
+          "traditionalTw": "Anʼanaviy (Tayvan)",
+          "traditionalHk": "Anʼanaviy (Gonkong)"
+        }
+      }
+    },
+    "postProcessing": {
+      "hotkey": {
+        "title": "Tezkor tugma"
+      },
+      "api": {
+        "title": "API",
+        "provider": {
+          "title": "Provayder",
+          "description": "OpenAI yoki Anthropic bilan mos provayderni tanlang."
+        },
+        "apiFormat": {
+          "title": "API formati",
+          "description": "Maxsus endpointingiz kutadigan soʻrov formati.",
+          "options": {
+            "openai": "OpenAI bilan mos (Chat Completions)",
+            "anthropic": "Anthropic Messages"
+          }
+        },
+        "appleIntelligence": {
+          "unavailable": "Apple Intelligence bu qurilmada mavjud emas. Apple Silicon Mac, macOS Tahoe (26.0) yoki undan yangisi va Tizim sozlamalarida yoqilgan Apple Intelligence kerak."
+        },
+        "baseUrl": {
+          "title": "Asosiy URL",
+          "description": "Tanlangan provayder uchun API asosiy URL manzili. Faqat maxsus provayderni tahrirlash mumkin.",
+          "placeholder": "https://api.openai.com/v1",
+          "placeholderAnthropic": "https://api.anthropic.com/v1"
+        },
+        "apiKey": {
+          "title": "API kaliti",
+          "description": "Tanlangan provayder uchun API kaliti.",
+          "placeholder": "sk-..."
+        },
+        "model": {
+          "title": "Model",
+          "descriptionCustom": "Maxsus endpointingiz kutadigan model identifikatorini kiriting.",
+          "descriptionDefault": "Tanlangan provayder taklif qiladigan modelni tanlang.",
+          "placeholderWithOptions": "Modelni qidiring yoki tanlang",
+          "placeholderNoOptions": "Model nomini kiriting",
+          "refreshModels": "Modellarni yangilash"
+        }
+      },
+      "prompts": {
+        "title": "Prompt",
+        "selectedPrompt": {
+          "title": "Tanlangan prompt",
+          "description": "Matnlarni yaxshilash uchun shablonni tanlang yoki yangisini yarating. Yozib olingan matnga murojaat qilish uchun prompt ichida ${output} dan foydalaning."
+        },
+        "noPrompts": "Promptlar yoʻq",
+        "selectPrompt": "Promptni tanlang",
+        "createNew": "Yangi prompt yaratish",
+        "promptLabel": "Prompt nomi",
+        "promptLabelPlaceholder": "Prompt nomini kiriting",
+        "promptInstructions": "Prompt koʻrsatmalari",
+        "promptInstructionsPlaceholder": "Matnga aylantirishdan keyin bajariladigan koʻrsatmalarni yozing. Masalan: Quyidagi matnning grammatikasi va ravonligini yaxshila: ${output}",
+        "promptTip": "Maslahat: promptga yozilgan matnni qoʻyish uchun <code>${output}</code> dan foydalaning.",
+        "updatePrompt": "Promptni yangilash",
+        "deletePrompt": "Promptni oʻchirish",
+        "createPrompt": "Prompt yaratish",
+        "cancel": "Bekor qilish",
+        "selectToEdit": "Tafsilotlarini koʻrish va tahrirlash uchun yuqoridan promptni tanlang.",
+        "createFirst": "Birinchi qayta ishlash promptingizni yaratish uchun yuqoridagi “Yangi prompt yaratish” tugmasini bosing."
+      }
+    },
+    "history": {
+      "title": "Tarix",
+      "openFolder": "Yozuvlar jildini ochish",
+      "loading": "Tarix yuklanmoqda...",
+      "empty": "Hozircha matnlar yoʻq. Tarixingizni boshlash uchun yozishni boshlang!",
+      "copyToClipboard": "Matndan buferga nusxa olish",
+      "copyError": "Matndan buferga nusxa olib boʻlmadi.",
+      "save": "Matnni saqlash",
+      "unsave": "Saqlanganlardan olib tashlash",
+      "delete": "Yozuvni oʻchirish",
+      "deleteError": "Yozuvni oʻchirib boʻlmadi. Qayta urinib koʻring.",
+      "retranscribe": "Qayta matnga aylantirish",
+      "cancelTranscription": "Matnga aylantirishni bekor qilish",
+      "transcribing": "Matnga aylantirilmoqda...",
+      "transcriptionFailed": "Matnga aylantirib boʻlmadi. Qayta urinish belgisi orqali qayta aylantirishingiz mumkin.",
+      "notTranscribed": "Matnga aylantirilmagan. Qayta urinish belgisi orqali aylantirishingiz mumkin.",
+      "transcribeFile": "Faylni matnga aylantirish",
+      "mediaFiles": "Audio va video",
+      "fileUnsupported": "{{name}} faylidan audioni oʻqib boʻlmadi.",
+      "transcribeFailed": "Matnga aylantirib boʻlmadi. Qayta urinib koʻring.",
+      "waiting": "Matnga aylantirish kutilmoqda",
+      "transcribingPercent": "Matnga aylantirilmoqda, {{percent}}%",
+      "readingFile": "Fayl oʻqilmoqda...",
+      "showMore": "Koʻproq koʻrsatish",
+      "showLess": "Kamroq koʻrsatish",
+      "dropTitle": "Matnga aylantirish uchun tashlang",
+      "dropDescription": "U Tarixda paydo boʻladi."
+    },
+    "debug": {
+      "title": "Nosozliklarni tuzatish",
+      "logDirectory": {
+        "title": "Jurnal jildi",
+        "description": "Jurnal fayllari saqlanadigan joy"
+      },
+      "logLevel": {
+        "title": "Jurnal darajasi",
+        "description": "Jurnal yuritish tafsilotlari darajasini belgilang"
+      },
+      "liveLogs": {
+        "title": "Jonli jurnal",
+        "description": "Jurnal faylini ochmasdan nosozliklarni aniqlash uchun ilova jurnalini real vaqtda koʻrsatadi. Faqat bu panel ochiq paytda chiqarilgan yozuvlar koʻrsatiladi; yuqoridagi Jurnal darajasi sozlamasiga amal qiladi.",
+        "live": "Jonli",
+        "paused": "Toʻxtatilgan",
+        "pause": "Toʻxtatish",
+        "resume": "Davom ettirish",
+        "copied": "Nusxa olindi",
+        "lineCount": "{{count}} qator",
+        "empty": "Jurnal kutilmoqda… Ilova chiqargan yozuvlar shu yerda paydo boʻladi."
+      },
+      "updateChecks": {
+        "label": "Yangilanishni tekshirish",
+        "description": "Shivirning yangi versiyalarini avtomatik tekshirish",
+        "lockedDescription": "Tizim sozlamalari bilan oʻchirilgan (HANDY_DISABLE_UPDATER)"
+      },
+      "whatsNewPreview": {
+        "title": "“Yangiliklar”ni oldindan koʻrish",
+        "description": "Oxirgi kiritilgan reliz izohini koʻrilgan deb belgilamasdan ochish",
+        "button": "Koʻrish"
+      },
+      "onboardingPreview": {
+        "title": "Tanishuvni oldindan koʻrish",
+        "description": "Ruxsatlar, modellar yoki yakunlanish holatini oʻzgartirmasdan tanishuv ekranlarini koʻrish",
+        "exitButton": "Koʻrishdan chiqish",
+        "choose": "Ekranni tanlang",
+        "screens": {
+          "welcome": "Xush kelibsiz",
+          "permissions": "Ruxsatlar",
+          "model": "Model",
+          "demo": "Namuna",
+          "try": "Sinash",
+          "done": "Tayyor"
+        }
+      },
+      "onboardingRun": {
+        "title": "Tanishuvni ishga tushirish",
+        "description": "Tanishuvdan boshidan haqiqatan oʻtish: ruxsat soʻraydi, modellarni yuklab oladi va tanlovlaringizni saqlaydi",
+        "button": "Boshlash"
+      },
+      "modelMigration": {
+        "title": "Modelni koʻchirish",
+        "description": "Eski formatdagi modellarni yangilash ekranini haqiqatan ochish: almashtiruvchilarni yuklab oladi, modellarni almashtiradi va eski fayllarni oʻchiradi",
+        "button": "Ochish"
+      },
+      "soundTheme": {
+        "label": "Tovush mavzusi",
+        "description": "Yozuv boshlanishi va tugashi signali uchun tovush mavzusini tanlang"
+      },
+      "wordCorrectionThreshold": {
+        "title": "Soʻzni tuzatish chegarasi",
+        "description": "Maxsus soʻzlarni tuzatish sezgirligi"
+      },
+      "historyLimit": {
+        "title": "Tarix chegarasi",
+        "description": "Saqlanadigan tarix yozuvlarining eng koʻp soni",
+        "entries": "ta yozuv"
+      },
+      "recordingRetention": {
+        "title": "Yozuvlarni avtomatik oʻchirish",
+        "description": "Joyni tejash uchun eski yozuvlarni avtomatik oʻchirish",
+        "never": "Hech qachon",
+        "preserveLimit": "Oxirgi {{count}} tasini saqlash",
+        "days3": "3 kundan keyin",
+        "weeks2": "2 haftadan keyin",
+        "months3": "3 oydan keyin",
+        "placeholder": "Saqlash muddatini tanlang..."
+      },
+      "alwaysOnMicrophone": {
+        "label": "Doim yoqiq mikrofon",
+        "description": "Tezroq javob uchun mikrofonni faol saqlash"
+      },
+      "clamshellMicrophone": {
+        "title": "Yopiq noutbuk mikrofoni",
+        "description": "Noutbuk qopqogʻi yopiq paytda ishlatiladigan mikrofon"
+      },
+      "postProcessingToggle": {
+        "label": "Qayta ishlash",
+        "description": "Matnga aylantirishdan keyin sunʼiy intellekt bilan matnni yaxshilashni yoqish"
+      },
+      "muteWhileRecording": {
+        "label": "Yozayotganda ovozni oʻchirish",
+        "description": "Yozuv paytida tizim ovozini oʻchirish"
+      },
+      "appendTrailingSpace": {
+        "label": "Oxiriga boʻsh joy qoʻshish",
+        "description": "Qoʻyilgan matndan keyin boʻsh joy qoʻshish"
+      },
+      "keyboardImplementation": {
+        "title": "Klaviatura ilovasi",
+        "description": "Tezkor tugmalar uchun ishlatiladigan tizimni tanlang.",
+        "bindingsReset": "Tezkor tugmalar mos kelmadi va standart holatga qaytarildi"
+      },
+      "pasteDelay": {
+        "title": "Qoʻyish kechikishi (oldin)",
+        "description": "Matndan nusxa olingandan keyin, qoʻyish tugmasi yuborilishidan oldingi kechikish (millisekundda). Hech narsa qoʻyilmasa, oshiring."
+      },
+      "pasteDelayAfter": {
+        "title": "Qoʻyish kechikishi (keyin)",
+        "description": "Qoʻyish tugmasidan keyin, avvalgi buferingiz tiklanishidan oldingi kechikish (millisekundda). Matn oʻrniga eski bufer qoʻyilayotgan boʻlsa, oshiring."
+      },
+      "holdThreshold": {
+        "title": "Bosib turish chegarasi",
+        "description": "Faqat Avto rejimida: tezkor tugma bosishdan koʻra bosib turish hisoblanishi uchun qancha vaqt (millisekundda) ushlab turilishi kerak. Qisqa bosib turishlar yozuvni yoqiq qoldirsa, kamaytiring; ataylab bosishlar bosib turish deb olinsa, oshiring."
+      },
+      "reliablePaste": {
+        "title": "Ishonchli qoʻyish (beta)",
+        "description": "Buferni qoʻyilgan vaqtdan keyin emas, balki maqsadli ilova matnni haqiqatan oʻqiganidan keyingina tiklaydi. Tizim yuklangan paytda eski bufer qoʻyilishini tuzatish uchun moʻljallangan. Bufer orqali qoʻyish usuli kerak; faqat macOS va Windows."
+      },
+      "recordingBuffer": {
+        "title": "Qoʻshimcha yozuv zaxirasi",
+        "description": "Tugmani qoʻyib yuborganingizdan keyin oxirgi tovushni olish uchun yozishni davom ettirish vaqti (millisekundda). 0 = qoʻshimcha zaxira yoʻq."
+      },
+      "languageDetectionWindow": {
+        "title": "Tilni aniqlash uchun audio",
+        "description": "Til aniqlagich eshitadigan nutq soniyalari. Uzunroq boʻlsa aniqroq, lekin sekinroq."
+      },
+      "keyboardDiagnostic": {
+        "title": "Klaviatura diagnostikasi",
+        "description": "Klaviatura hodisalari Shivirga yetib borayotganini tekshiradi. Faqat hodisalar soni yoziladi — qaysi tugmalarni bosganingiz hech qachon yozilmaydi.",
+        "run": "10 soniyalik diagnostikani ishga tushirish",
+        "running": "Tinglanmoqda… tezkor tugmangizni bir necha marta bosing (masalan, Option+Space)",
+        "secureInputLabel": "Secure Input",
+        "enabled": "yoqilgan",
+        "disabled": "oʻchirilgan",
+        "holder": "{{name}} ushlab turibdi (pid {{pid}})",
+        "holderUnknown": "koʻrinadigan egasi yoʻq",
+        "keyDown": "Tugma bosildi",
+        "keyUp": "Tugma qoʻyib yuborildi",
+        "flagsChanged": "Modifikatorlar",
+        "mouse": "Sichqoncha",
+        "verdictBlocked": "Secure Input tugma hodisalarini bloklamoqda — muammo hal qilinmaguncha tezkor tugmalar ishlamaydi.",
+        "verdictSuspicious": "Modifikator hodisalari keldi, lekin tugma hodisalari yoʻq — Secure Input oʻchiq deb koʻrsatilsa ham, nimadir tugmalarni toʻsmoqda. Iltimos, bu haqda GitHub orqali xabar bering.",
+        "verdictOk": "Tugma hodisalari Shivirga odatdagidek yetib kelmoqda.",
+        "verdictNoEvents": "Hodisalar qayd etilmadi — sinov paytida biror tugma bosdingizmi?",
+        "failed": "Diagnostika muvaffaqiyatsiz tugadi: {{error}}"
+      }
+    },
+    "about": {
+      "title": "Dastur haqida",
+      "version": {
+        "title": "Versiya",
+        "description": "Shivirning joriy versiyasi"
+      },
+      "whatsNewUpdates": {
+        "label": "“Yangiliklar”ni koʻrsatish",
+        "description": "Shivir yangilangandan keyin relizlar izohini koʻrsatish"
+      },
+      "appDataDirectory": {
+        "title": "Ilova maʼlumotlari jildi",
+        "description": "Shivir maʼlumotlarini saqlaydigan joy"
+      },
+      "sourceCode": {
+        "title": "Manba kodi",
+        "description": "Manba kodini koʻrish va hissa qoʻshish",
+        "button": "GitHub da koʻrish"
+      },
+      "supportDevelopment": {
+        "title": "Rivojlanishni qoʻllab-quvvatlash",
+        "description": "Handy ustida ishlashda davom etishimizga yordam bering",
+        "button": "Xayriya qilish"
+      },
+      "acknowledgments": {
+        "title": "Minnatdorchilik",
+        "ggml": {
+          "title": "ggml",
+          "description": "Qurilmaning oʻzida mashinaviy oʻqitish xulosalarini chiqarish uchun yuqori samarali tenzor kutubxonasi",
+          "details": "Shivirning lokal nutqni matnga aylantirishi transcribe.cpp va ggml asosida qurilgan. Georgi Gerganov va hissa qoʻshuvchilarning ajoyib ishi uchun rahmat."
+        }
+      }
+    }
+  },
+  "footer": {
+    "checkingUpdates": "Yangilanish tekshirilmoqda...",
+    "updateAvailableShort": "Yangilanish mavjud",
+    "upToDate": "Eng yangi versiya",
+    "updateCheckingDisabled": "Yangilanishni tekshirish oʻchirilgan",
+    "downloading": "Yuklab olinmoqda... {{progress}}%",
+    "installing": "Oʻrnatilmoqda...",
+    "preparing": "Tayyorlanmoqda...",
+    "checkForUpdates": "Yangilanishni tekshirish",
+    "portableUpdateTitle": "Qoʻlda yangilash kerak",
+    "portableUpdateMessage": "Portativ oʻrnatmalar avtomatik yangilanmaydi. Quyidan tizimingiz uchun oʻrnatuvchini yuklab oling, ishga tushiring va bir xil jildga oʻrnating — Data/ jildingiz (sozlamalar, modellar, yozuvlar) joyida qoladi.",
+    "portableUpdateButton": "Oʻrnatuvchini yuklab olish",
+    "portableUpdateBrowseMessage": "Portativ oʻrnatmalar avtomatik yangilanmaydi. Tizimingiz uchun eng yangi versiyani GitHub Releases dan yuklab oling va bir xil jildga oʻrnating — Data/ jildingiz (sozlamalar, modellar, yozuvlar) joyida qoladi.",
+    "portableUpdateBrowseButton": "GitHub Releases ni ochish"
+  },
+  "whatsNew": {
+    "title": "Shivir v{{version}} yangiliklari"
+  },
+  "common": {
+    "playbackPosition": "Ijro oʻrni",
+    "resetSetting": "{{setting}} ni standart holatga qaytarish",
+    "loading": "Yuklanmoqda...",
+    "delete": "Oʻchirish",
+    "close": "Yopish",
+    "open": "Ochish",
+    "copy": "Nusxa olish",
+    "clear": "Tozalash",
+    "noOptionsFound": "Variantlar topilmadi"
+  },
+  "errors": {
+    "loadDirectory": "Jildni yuklashda xato: {{error}}",
+    "micPermissionDeniedTitle": "Mikrofonga ruxsat berilmadi",
+    "micPermissionDenied": {
+      "generic": "Operatsion tizim mikrofonga ruxsat bermadi. Tizim sozlamalarida mikrofonga ruxsat bering.",
+      "windows": "Mikrofonga ruxsatni Sozlamalar → Maxfiylik va xavfsizlik → Mikrofon boʻlimida yoqing (ish stoli ilovalari uchun ham).",
+      "macos": "Mikrofonga ruxsatni Tizim sozlamalari → Maxfiylik va xavfsizlik → Mikrofon boʻlimida bering.",
+      "linux": "Mikrofonga ruxsatni tizimingizning tovush yoki maxfiylik sozlamalarida bering."
+    },
+    "noInputDeviceTitle": "Mikrofon topilmadi",
+    "noInputDevice": "Audio kirish qurilmasi aniqlanmadi. Mikrofon yoki quloqchin ulang va qayta urinib koʻring.",
+    "recordingFailedTitle": "Yozuvni boshlab boʻlmadi",
+    "modelLoadFailed": "Shivir bu modelni yuklay olmadi. Qayta urinib koʻring yoki boshqasini tanlang.",
+    "modelLoadFailedTitle": "Modelni yuklab boʻlmadi",
+    "modelDownloadFailed": "Yuklab olib boʻlmadi",
+    "pasteFailedTitle": "Matnni qoʻyib boʻlmadi",
+    "pasteFailed": "Matnni faol ilovaga qoʻyib boʻlmadi.",
+    "postProcessFailedTitle": "Qayta ishlanmasdan qoʻyildi",
+    "postProcessFailed": "Qayta ishlash tugamadi, shuning uchun matn oʻzgarishsiz qoʻyildi.",
+    "filePostProcessFailedTitle": "Qayta ishlanmasdan matnga aylantirildi",
+    "filePostProcessFailed": "Qayta ishlash tugamadi, shuning uchun matn oʻzgarishsiz saqlandi.",
+    "fileTranscriptionFailedTitle": "Faylni matnga aylantirib boʻlmadi",
+    "transcriptionFailedTitle": "Matnga aylantirib boʻlmadi"
+  },
+  "notices": {
+    "errorOne": "{{n}} ta xato",
+    "errorMany": "{{n}} ta xato",
+    "warningOne": "{{n}} ta ogohlantirish",
+    "warningMany": "{{n}} ta ogohlantirish",
+    "errorsAndWarnings": "{{errors}}, {{warnings}}"
+  },
+  "appLanguage": {
+    "title": "Ilova tili",
+    "description": "Shivir interfeysi tilini oʻzgartiring"
+  },
+  "theme": {
+    "title": "Ilova mavzusi",
+    "description": "Shivir tizim mavzusiga ergashishini yoki doim yorugʻ yoki tungi boʻlishini tanlang",
+    "options": {
+      "system": "Tizim",
+      "light": "Yorugʻ",
+      "dark": "Tungi"
+    }
+  },
+  "overlay": {
+    "transcribing": "Matnga aylantirilmoqda...",
+    "processing": "Qayta ishlanmoqda...",
+    "loadingModel": "Model yuklanmoqda...",
+    "clickToDictate": "Diktovka uchun bosing",
+    "finishAndPaste": "Tugatish va qoʻyish",
+    "pasteRecoveryHint": "Diktovkadan oldin matn maydonini tanlang",
+    "pasteRecoveryCopy": "Diktovkadan nusxa olish",
+    "pasteRecoveryCopied": "Nusxa olindi"
+  },
+  "secureInput": {
+    "blockedWithCulprit_one": "{{name}} 1 ta tezkor tugmani bloklayotgan boʻlishi mumkin",
+    "blockedWithCulprit_other": "{{name}} {{count}} ta tezkor tugmani bloklayotgan boʻlishi mumkin",
+    "blockedNoCulprit_one": "macOS 1 ta tezkor tugmani vaqtincha bloklamoqda",
+    "blockedNoCulprit_other": "macOS {{count}} ta tezkor tugmani vaqtincha bloklamoqda",
+    "recorderBlockedWithCulprit": "{{name}} tezkor tugmalarni oʻzgartirishni bloklayotgan boʻlishi mumkin",
+    "recorderBlockedNoCulprit": "macOS tezkor tugmalarni oʻzgartirishni vaqtincha bloklamoqda",
+    "learnMore": "Qanday tuzatish mumkin",
+    "recorderBlocked": "Hozir tezkor tugmalarni yozib boʻlmaydi — macOS Secure Input tugma hodisalarini bloklamoqda. Avval Secure Input ogohlantirishini bartaraf qiling.",
+    "dismiss": "Yopish"
+  }
+}

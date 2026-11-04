@@ -16,6 +16,7 @@ export const LANGUAGE_METADATA: Record<
     direction?: "ltr" | "rtl";
   }
 > = {
+  uz: { name: "Uzbek", nativeName: "Oʻzbekcha", priority: 0 },
   en: { name: "English", nativeName: "English", priority: 1 },
   zh: { name: "Simplified Chinese", nativeName: "简体中文", priority: 2 },
   "zh-TW": { name: "Traditional Chinese", nativeName: "繁體中文", priority: 3 },
