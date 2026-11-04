@@ -892,6 +892,9 @@ pub fn hide_flowbar_tooltip(app: AppHandle) -> Result<(), String> {
 }
 
 fn show_overlay_state(app_handle: &AppHandle, state: &str) {
+    // Published at request time (before the main-thread hop), so a failure
+    // reported meanwhile sees that a session owns the bar.
+    OVERLAY_SESSION_SHOWING.store(is_session_state(state), Ordering::SeqCst);
     // Whether the overlay shows at all is governed by overlay_style; position
     // only chooses its dock edge. Checked here (off the main thread)
     // so the common overlay-disabled case never pays for a main-thread hop.
@@ -917,7 +920,6 @@ fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
     // Keep the previous native bounds for the 100 ms active -> resting morph.
     // Shrinking the window before the CSS transition completes clips the pill.
     OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst);
-    OVERLAY_SESSION_SHOWING.store(is_session_state(state), Ordering::SeqCst);
     let next_state_code = overlay_state_code(state);
     let previous_state_code = CURRENT_OVERLAY_STATE.swap(next_state_code, Ordering::Relaxed);
     let should_delay_collapse = next_state_code == 0 && previous_state_code != 0;
@@ -1180,6 +1182,7 @@ pub fn show_overlay_notice(app_handle: &AppHandle, notice: &Notice) {
         hide_recording_overlay(app_handle);
         return;
     }
+    OVERLAY_SESSION_SHOWING.store(false, Ordering::SeqCst);
     let handle = app_handle.clone();
     let notice = notice.clone();
     let _ = app_handle.run_on_main_thread(move || {
@@ -1189,18 +1192,52 @@ pub fn show_overlay_notice(app_handle: &AppHandle, notice: &Notice) {
         OVERLAY_NOTICE_GENERATION.store(generation, Ordering::SeqCst);
         std::thread::spawn(move || {
             std::thread::sleep(NOTICE_HOLD);
-            if OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) == generation {
-                show_idle_overlay(&handle);
-            }
+            idle_if_still_showing(&handle, generation);
         });
     });
 }
 
 /// Ends the notice early, unless a new session has replaced it.
 pub fn dismiss_overlay_notice(app_handle: &AppHandle) {
-    let shown = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
-    if OVERLAY_NOTICE_GENERATION.load(Ordering::SeqCst) == shown {
+    let notice = OVERLAY_NOTICE_GENERATION.load(Ordering::SeqCst);
+    idle_if_still_showing(app_handle, notice);
+}
+
+/// Returns the bar to resting only if nothing has shown since `generation`.
+/// Checked on the main thread, where every state change runs, so a show
+/// queued in the meantime always wins.
+fn idle_if_still_showing(app_handle: &AppHandle, generation: u64) {
+    let handle = app_handle.clone();
+    let _ = app_handle.run_on_main_thread(move || {
+        if OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        if settings::get_settings(&handle).overlay_style == OverlayStyle::None {
+            hide_overlay_window(&handle);
+        } else {
+            show_overlay_state_on_main(&handle, "resting");
+        }
+    });
+}
+
+/// Applies a changed overlay style without disturbing a take in progress.
+pub fn apply_overlay_style(app_handle: &AppHandle) {
+    if settings::get_settings(app_handle).overlay_style == OverlayStyle::None {
+        hide_overlay_window(app_handle);
+    } else if is_session_showing() {
+        update_overlay_position(app_handle);
+    } else {
         show_idle_overlay(app_handle);
+    }
+}
+
+/// A held take just locked hands-free: swap the waveform-only layout for the
+/// one with cancel and finish. A Live (streaming) take keeps its panel, which
+/// already shows both.
+pub fn promote_to_hands_free(app_handle: &AppHandle) {
+    set_recording_push_to_talk(false);
+    if current_overlay_state() == "recording-ptt" {
+        show_recording_overlay(app_handle);
     }
 }
 

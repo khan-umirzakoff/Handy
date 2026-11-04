@@ -19,6 +19,8 @@ const RELEASE_GRACE: Duration = Duration::from_millis(50);
 /// keeps the lock instead of stopping a half-second take.
 /// Evidence: `.re/flow-desktop/pretty/main/index.js:252218` (500 ms debounce).
 const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(500);
+/// Shorter re-press gaps are synthetic key repeat, not a second tap.
+const HUMAN_REPRESS_GAP: Duration = Duration::from_millis(15);
 /// Hotkey label for dictations started by clicking the bar.
 const BAR_SOURCE: &str = "Shivir bar";
 
@@ -313,7 +315,25 @@ impl CoordinatorState {
             held_binding,
         ) {
             PttAction::CancelRelease => {
-                self.pending_release = None;
+                let released = self.pending_release.take();
+                // X11 auto-repeat re-presses within a millisecond; a real
+                // finger needs longer. A real quick second tap of a tap-start
+                // is the double-tap gesture: lock instead of treating the two
+                // presses as one long hold.
+                if let (Some(release), Some(hold)) = (released, self.hold.as_mut()) {
+                    let gap = now.saturating_duration_since(release.released_at);
+                    let held = release
+                        .released_at
+                        .saturating_duration_since(hold.pressed_at);
+                    if input.mode == ShortcutActivation::HoldOrToggle
+                        && gap >= HUMAN_REPRESS_GAP
+                        && held < release.hold_threshold
+                        && now.saturating_duration_since(hold.pressed_at) < DOUBLE_TAP_WINDOW
+                    {
+                        debug!("Fast double-tap for '{}': locked", input.binding_id);
+                        hold.locked = true;
+                    }
+                }
                 return None;
             }
             PttAction::DeferRelease => {
@@ -781,8 +801,7 @@ impl TranscriptionCoordinator {
 fn on_locked(app: &AppHandle, mid_take: bool) {
     emit_recording_phase(app, RecordingPhase::Locked);
     if mid_take {
-        crate::overlay::set_recording_push_to_talk(false);
-        crate::overlay::show_recording_overlay(app);
+        crate::overlay::promote_to_hands_free(app);
         play_feedback_sound(app, SoundType::Lock);
     }
 }
@@ -1428,6 +1447,23 @@ mod tests {
             state.on_input(input(mode, true), t0 + ms(3000)),
             Some(Effect::Stop { .. })
         ));
+    }
+
+    /// A second tap that lands inside the release grace of the first (a very
+    /// fast double-tap) still locks instead of reading as one long hold.
+    #[test]
+    fn hold_or_toggle_fast_double_tap_inside_grace_locks() {
+        let mode = ShortcutActivation::HoldOrToggle;
+        let mut state = CoordinatorState::new();
+        let t0 = Instant::now();
+
+        state.on_input(input(mode, true), t0);
+        assert!(state.on_input(input(mode, false), t0 + ms(100)).is_none());
+        assert!(state.on_input(input(mode, true), t0 + ms(130)).is_none());
+        assert!(state.is_locked());
+        assert!(state.on_input(input(mode, false), t0 + ms(350)).is_none());
+        assert!(state.on_grace_expired().is_none());
+        assert_eq!(state.stage, Stage::Recording(BINDING.to_string()));
     }
 
     /// A bar click starts a locked take and the next click finishes it; a

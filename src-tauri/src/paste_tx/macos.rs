@@ -118,17 +118,19 @@ static PENDING: Mutex<Option<Arc<Mutex<MacPending>>>> = Mutex::new(None);
 /// restores the previous clipboard, guarded so we never clobber a newer copy.
 /// Must run on the main thread. Uses the already-locked enigo when called
 /// from within `paste` (which holds the lock), otherwise locks it itself.
+/// Returns whether this call settled the transaction (false if another path
+/// already had).
 fn settle(
     pending: &Arc<Mutex<MacPending>>,
     app_handle: &AppHandle,
     enigo: Option<&mut enigo::Enigo>,
-) {
+) -> bool {
     let mut p = match pending.lock() {
         Ok(p) => p,
-        Err(_) => return,
+        Err(_) => return false,
     };
     if p.settled {
-        return;
+        return false;
     }
     p.settled = true;
 
@@ -179,6 +181,7 @@ fn settle(
     // Release the owner; any outstanding promise dies with the pasteboard
     // contents we just replaced (or with the external change).
     p.provider = None;
+    true
 }
 
 /// If a previous transaction is still holding the clipboard, settle it now so
@@ -189,7 +192,7 @@ fn flush_pending(app_handle: &AppHandle, enigo: &mut enigo::Enigo) {
         Err(_) => None,
     };
     if let Some(previous) = previous {
-        settle(&previous, app_handle, Some(enigo));
+        let _ = settle(&previous, app_handle, Some(enigo));
     }
 }
 
@@ -249,9 +252,13 @@ fn spawn_waiter(pending: Arc<Mutex<MacPending>>, app_handle: AppHandle) {
         let pending_for_finish = pending.clone();
         let app_for_finish = app_handle.clone();
         let _ = app_handle.run_on_main_thread(move || {
-            settle(&pending_for_finish, &app_for_finish, None);
+            // Skip the card if a newer paste settled this one, or a newer
+            // dictation owns the bar by now.
+            let settled_here = settle(&pending_for_finish, &app_for_finish, None);
             if let Some(text) = recovery_text {
-                crate::overlay::show_paste_recovery_overlay(&app_for_finish, text);
+                if settled_here && !crate::overlay::is_session_showing() {
+                    crate::overlay::show_paste_recovery_overlay(&app_for_finish, text);
+                }
             }
             if let Ok(mut slot) = PENDING.lock() {
                 let is_us = slot

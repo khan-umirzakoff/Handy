@@ -785,7 +785,7 @@ pub fn change_overlay_style_setting(app: AppHandle, style: String) -> Result<(),
 
     // Apply visibility immediately. Enabled styles show the persistent resting
     // bar; None is the only state that hides the native window.
-    crate::overlay::show_idle_overlay(&app);
+    crate::overlay::apply_overlay_style(&app);
 
     Ok(())
 }
