@@ -16,7 +16,7 @@ import React, {
   useState,
 } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import { commands } from "@/bindings";
+import { commands, events } from "@/bindings";
 import type { DragInsets, Notice } from "@/bindings";
 import { syncLanguageFromSettings } from "@/i18n";
 import { noticeDisplay } from "@/lib/notices";
@@ -205,23 +205,31 @@ const Bar: React.FC = () => {
       }
     })();
 
+    const applyNative = (next: BarState) => {
+      const wasLive =
+        nativeRef.current === "ptt" || nativeRef.current === "popo";
+      if (next === "ptt" || next === "popo") {
+        if (!wasLive) setMicActive(false);
+      } else {
+        setMicActive(false);
+        levelTarget.current = 0;
+      }
+      setNative(next);
+      // Every session state replaces a card, so a new take never sits under an old one.
+      closeToast();
+    };
     void on<string>("show-overlay", (s) => {
       window.clearTimeout(clickStartTimer.current);
       setEnabled(true);
       const next = fromNative(s);
-      if (next) {
-        const wasLive =
-          nativeRef.current === "ptt" || nativeRef.current === "popo";
-        if (next === "ptt" || next === "popo") {
-          if (!wasLive) setMicActive(false);
-        } else {
-          setMicActive(false);
-          levelTarget.current = 0;
-        }
-        setNative(next);
-      }
-      if (next === "resting" || next === "processing") closeToast();
+      if (next) applyNative(next);
     });
+    // A Live take reports stop and polishing here instead of show-overlay.
+    void events.streamPhaseEvent
+      .listen((e) => {
+        if (e.payload.phase === "working") applyNative("processing");
+      })
+      .then((off) => (alive ? offs.push(off) : off()));
     void on("hide-overlay", () => setEnabled(false));
     void on("recording-ready", () => setMicActive(true));
     void on<string>("overlay-position-changed", (e) => setEdge(edgeOf(e)));
@@ -367,6 +375,12 @@ const Bar: React.FC = () => {
   useEffect(() => {
     const move = (e: MouseEvent) => {
       const o = dragOrigin.current;
+      // The release was lost (it happened off the stage): end the press here, or
+      // the whole-stage catch rect keeps swallowing clicks.
+      if (o && e.buttons === 0) {
+        up();
+        return;
+      }
       if (o && drag === "idle") {
         if (
           (e.screenX - o.x) ** 2 + (e.screenY - o.y) ** 2 <=
@@ -498,7 +512,8 @@ const Bar: React.FC = () => {
     try {
       await writeText(toast.text);
       setCopied(true);
-      window.setTimeout(dismissToast, COPIED_CLOSE_MS);
+      // A toast timer, so a newer card or take cancels it.
+      later(COPIED_CLOSE_MS, dismissToast);
     } catch {
       // Keep the card open: the text stays readable on screen.
     }

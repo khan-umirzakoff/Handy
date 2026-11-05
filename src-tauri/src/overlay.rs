@@ -43,6 +43,9 @@ tauri_panel! {
 // `ReportAlphaCatchRects`). Stage sizes are Flow's status window:
 // bottom 512 x 614, sides 490 x min(1144, work-area height)
 // (.re/flow-desktop/pretty/main/index.js:403964-404010).
+// shortcut: only macOS runs the catch-rect hit test (start_flowbar_hit_test), so on
+// Windows/Linux the whole transparent stage takes clicks. Port it (the Windows
+// cursor is in physical pixels) before shipping those platforms.
 const STAGE_BOTTOM_WIDTH: f64 = 512.0;
 const STAGE_BOTTOM_HEIGHT: f64 = 614.0;
 const STAGE_SIDE_WIDTH: f64 = 490.0;
@@ -1006,7 +1009,10 @@ pub fn promote_to_hands_free(app_handle: &AppHandle) {
 #[tauri::command]
 #[specta::specta]
 pub fn dismiss_overlay_card(app: AppHandle) {
-    show_idle_overlay(&app);
+    // A late close (the copy card's timer) must not reset a take that started since.
+    if !is_session_showing() {
+        show_idle_overlay(&app);
+    }
 }
 
 fn update_overlay_position_on_main(app_handle: &AppHandle) {
@@ -1188,22 +1194,22 @@ mod tests {
                 monitor_position,
                 monitor_size,
                 1.5,
-                BOTTOM_REST_WIDTH,
-                BOTTOM_HEIGHT,
+                STAGE_BOTTOM_WIDTH,
+                STAGE_BOTTOM_HEIGHT,
                 OverlayPosition::Bottom,
             ),
-            (3783, 2067, 114, 81)
+            (3456, 1227, 768, 921)
         );
         assert_eq!(
             windows_overlay_bounds(
                 monitor_position,
                 monitor_size,
                 1.5,
-                SIDE_REST_WIDTH,
-                SIDE_REST_HEIGHT,
+                STAGE_SIDE_WIDTH,
+                STAGE_SIDE_MAX_HEIGHT,
                 OverlayPosition::Left,
             ),
-            (1932, 1023, 81, 114)
+            (1932, 222, 735, 1716)
         );
     }
 
@@ -1215,11 +1221,11 @@ mod tests {
                 PhysicalPosition::new(-2560, -200),
                 PhysicalSize::new(2560, 1440),
                 1.25,
-                OVERLAY_STREAM_WIDTH,
-                OVERLAY_STREAM_HEIGHT,
+                STAGE_BOTTOM_WIDTH,
+                STAGE_BOTTOM_HEIGHT,
                 OverlayPosition::Bottom,
             ),
-            (-1530, 1080, 500, 150)
+            (-1600, 462, 640, 768)
         );
     }
 }
