@@ -20,6 +20,8 @@ import { commands, events } from "@/bindings";
 import type { DragInsets, Notice } from "@/bindings";
 import { syncLanguageFromSettings } from "@/i18n";
 import { noticeDisplay } from "@/lib/notices";
+import { formatKeyCombination } from "@/lib/utils/keyboard";
+import { useOsType } from "@/hooks/useOsType";
 import "./bar.css";
 
 type Edge = "bottom" | "left" | "right";
@@ -89,27 +91,6 @@ const fromNative = (s: string): BarState | null => {
 const edgeOf = (v: string | undefined): Edge =>
   v === "left" || v === "right" ? v : "bottom";
 
-const prettyHotkey = (binding: string | undefined) =>
-  (binding ?? "")
-    .split("+")
-    .filter(Boolean)
-    .map((k) => {
-      const key = k.trim().toLowerCase();
-      const names: Record<string, string> = {
-        option: "⌥",
-        alt: "⌥",
-        command: "⌘",
-        cmd: "⌘",
-        control: "⌃",
-        ctrl: "⌃",
-        shift: "⇧",
-        fn: "fn",
-        space: "Space",
-      };
-      return names[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
-    })
-    .join(" + ");
-
 /** §4.3: the first hover change applies at once, later ones within 100 ms are coalesced. */
 function useDebouncedHover(raw: boolean) {
   const [value, setValue] = useState(raw);
@@ -142,6 +123,18 @@ const Bar: React.FC = () => {
   };
   const [micActive, setMicActive] = useState(false);
   const [hotkey, setHotkey] = useState("");
+  const osType = useOsType();
+  // The settings window's own names; re-read on hover, as a rebinding sends no event.
+  const refreshHotkey = useCallback(async () => {
+    const s = await commands.getAppSettings();
+    if (s.status === "ok")
+      setHotkey(
+        formatKeyCombination(
+          s.data.bindings?.transcribe?.current_binding ?? "",
+          osType,
+        ),
+      );
+  }, [osType]);
   const [rawHover, setRawHover] = useState(false);
   const hovered = useDebouncedHover(rawHover);
   const [tip, setTip] = useState<{ kind: TipKind; anchor: HTMLElement } | null>(
@@ -201,7 +194,7 @@ const Bar: React.FC = () => {
       if (alive && s.status === "ok") {
         setEdge(edgeOf(s.data.overlay_position));
         setEnabled(s.data.overlay_style !== "none");
-        setHotkey(prettyHotkey(s.data.bindings?.transcribe?.current_binding));
+        void refreshHotkey();
       }
     })();
 
@@ -303,9 +296,14 @@ const Bar: React.FC = () => {
   );
   const bubbleRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (state === "ready")
+    if (state === "ready") {
+      void refreshHotkey();
       showTipSoon("dictate", bubbleRef.current, TIP_AFTER_READY_MS);
-    else if (state === "resting" || state === "processing" || state === "error")
+    } else if (
+      state === "resting" ||
+      state === "processing" ||
+      state === "error"
+    )
       hideTip();
     // Only the state transition schedules the bubble tooltip.
   }, [state]);
