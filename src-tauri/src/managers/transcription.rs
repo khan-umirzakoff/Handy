@@ -1699,7 +1699,14 @@ fn post_process_transcription_text(
             settings.filler_word_removal_enabled,
         );
 
-        normalize_transcription_output(&without_fillers)
+        let normalized = normalize_transcription_output(&without_fillers);
+        // Uzbek output gets Kotib's cleanup: Whisper's phrase loops and the
+        // oʻ/gʻ apostrophes (research/codex-codebases.md, Kotib text rules).
+        if output_language.language() == Some("uz") {
+            crate::uzbek_text::clean(&normalized)
+        } else {
+            normalized
+        }
     })
 }
 
