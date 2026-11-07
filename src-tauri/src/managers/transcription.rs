@@ -1164,6 +1164,10 @@ impl TranscriptionManager {
         // shortcut: the lead-in goes before the whole take; a long take that is
         // chunked gets it only on its first chunk, which is enough for the
         // dropped-first-word case it fixes.
+        let mut audio = audio;
+        if setup.normalize_peak {
+            crate::model_profiles::normalize_peak(&mut audio);
+        }
         let audio = if setup.lead_in_samples > 0 {
             let mut padded = vec![0.0; setup.lead_in_samples];
             padded.extend(audio);
@@ -1271,6 +1275,8 @@ struct RunSetup {
     run_options: RunOptions,
     /// Silence put before the audio (the model profile's lead-in).
     lead_in_samples: usize,
+    /// Scale the take to a 0.95 peak first (the model profile's choice).
+    normalize_peak: bool,
     /// The language every run uses, and how it was chosen.
     language: LanguageDecision,
     languages: Vec<String>,
@@ -1392,6 +1398,7 @@ fn run_setup(info: &LoadedInfo, settings: &AppSettings, language: LanguageDecisi
         applied_language_hint,
         output_was_translated,
         lead_in_samples: profile.as_ref().map_or(0, |p| p.lead_in_ms as usize * 16),
+        normalize_peak: profile.as_ref().is_some_and(|p| p.normalize_peak),
     }
 }
 

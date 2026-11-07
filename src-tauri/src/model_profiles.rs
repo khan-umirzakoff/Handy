@@ -28,7 +28,22 @@ pub struct ModelProfile {
     /// one-word takes ("baʼzida" -> "baʼzida uchta"); with 1 s of lead-in it
     /// wrote all three of the owner's takes right (300 ms was not enough).
     pub lead_in_ms: u32,
+    /// Scale each take so its peak reaches 0.95 (at most ×40), as Kotib does
+    /// before every transcription (`references/kotib/src/audio_util.swift:54-63`,
+    /// called at `src/ilova.swift:379`): quiet or distant speech gets through.
+    pub normalize_peak: bool,
     pub whisper: WhisperRunOptions,
+}
+
+/// Kotib's peak normalisation: gain `min(0.95 / peak, 40)`; a take whose peak
+/// is at most 0.0001 (silence) is left alone.
+pub fn normalize_peak(samples: &mut [f32]) {
+    let peak = samples.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+    if peak <= 0.0001 {
+        return;
+    }
+    let gain = (0.95 / peak).min(40.0);
+    samples.iter_mut().for_each(|s| *s *= gain);
 }
 
 const UZBEK_VARIANTS: &[&str] = &[
@@ -43,6 +58,7 @@ pub fn for_variant(variant: &str) -> Option<ModelProfile> {
         language: "uz",
         timestamps: TimestampKind::None,
         lead_in_ms: 1000,
+        normalize_peak: true,
         whisper: WhisperRunOptions {
             temperature: Some(0.0),
             // No temperature fallback: without Kotib's beam search it samples
@@ -73,7 +89,22 @@ mod tests {
         assert_eq!(p.whisper.temperature_inc, Some(0.0));
         assert_eq!(p.whisper.no_speech_thold, Some(0.25));
         assert!(matches!(p.timestamps, TimestampKind::None));
+        assert!(p.normalize_peak);
         assert!(for_variant("whisper-medium").is_none());
+    }
+
+    #[test]
+    fn peak_normalisation_matches_kotib() {
+        let mut loud = vec![0.5, -0.25];
+        normalize_peak(&mut loud);
+        assert_eq!(loud, vec![0.95, -0.475]);
+        let mut quiet = vec![0.001, -0.0005];
+        normalize_peak(&mut quiet);
+        // Capped at x40, not scaled to 0.95.
+        assert!((quiet[0] - 0.04).abs() < 1e-6 && (quiet[1] + 0.02).abs() < 1e-6);
+        let mut silent = vec![0.00005, 0.0];
+        normalize_peak(&mut silent);
+        assert_eq!(silent, vec![0.00005, 0.0]);
     }
 
     /// Replays recorded takes (the app's `recordings/*.wav`) through decoding
@@ -128,8 +159,15 @@ mod tests {
             .expect("SHIVIR_CLIPS")
             .split(',')
             .map(|p| {
+                // SHIVIR_GAIN scales the take (a quieter mic); SHIVIR_NO_NORM
+                // skips the profile's peak normalisation.
+                let gain: f32 = std::env::var("SHIVIR_GAIN").map_or(1.0, |v| v.parse().unwrap());
+                let mut take: Vec<f32> = load(p).into_iter().map(|s| s * gain).collect();
+                if std::env::var("SHIVIR_NO_NORM").is_err() {
+                    normalize_peak(&mut take);
+                }
                 let mut pcm = vec![0.0; pad];
-                pcm.extend(load(p));
+                pcm.extend(take);
                 (p.rsplit('/').next().unwrap().to_string(), pcm)
             })
             .collect();
@@ -222,15 +260,21 @@ mod tests {
             for (file, reference) in &rows {
                 let mut wav = hound::WavReader::open(dir.join("dev").join(file)).unwrap();
                 assert_eq!(wav.spec().sample_rate, 16_000);
-                let mut pcm = vec![0.0f32; profile.lead_in_ms as usize * 16];
-                match wav.spec().sample_format {
+                // As the app prepares a take: normalise, then the lead-in.
+                let mut take: Vec<f32> = match wav.spec().sample_format {
                     hound::SampleFormat::Float => {
-                        pcm.extend(wav.samples::<f32>().map(Result::unwrap))
+                        wav.samples::<f32>().map(Result::unwrap).collect()
                     }
-                    hound::SampleFormat::Int => {
-                        pcm.extend(wav.samples::<i32>().map(|s| s.unwrap() as f32 / 32768.0))
-                    }
+                    hound::SampleFormat::Int => wav
+                        .samples::<i32>()
+                        .map(|s| s.unwrap() as f32 / 32768.0)
+                        .collect(),
                 };
+                if profile.normalize_peak {
+                    normalize_peak(&mut take);
+                }
+                let mut pcm = vec![0.0f32; profile.lead_in_ms as usize * 16];
+                pcm.extend(take);
                 let text =
                     crate::uzbek_text::clean(session.run(&pcm, &options).unwrap().text.trim());
                 let (r, h) = (norm(reference), norm(&text));
