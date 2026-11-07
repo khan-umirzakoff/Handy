@@ -1,10 +1,10 @@
 import {
-  catalog,
   modelMatchesLanguage,
   type CatalogModel,
   type MachineTier,
 } from "@handy-computer/models";
 import {
+  catalog,
   errorFor,
   geoMean,
   gradeFor,

@@ -7,6 +7,10 @@
 //! the curated subset. It is compiled into the binary so Handy ships a
 //! complete model list with zero network access.
 //!
+//! `shivir.json` adds Shivir's own models (the Uzbek fine-tunes) in the same
+//! shape; it is appended at load here and in `src/lib/models/catalog.ts`.
+//! Handy's mirror does not host them.
+//!
 //! Every supported transcription model is offered for download and mirrored
 //! at the package's default quant, independently of recommendation ranking.
 //!
@@ -35,21 +39,26 @@ const SCHEMA: u32 = 2;
 /// `scripts/mirror_models.py` populates it from this catalog.
 const MIRRORS: &[&str] = &["https://blob.handy.computer"];
 
-/// Handy's list order and onboarding set, keyed by catalog id. Kept from the
-/// previous generator until onboarding moves to the package's recommendations.
+/// The list order and onboarding set, keyed by catalog id: Shivir's Uzbek
+/// models first (an Uzbek-first app; Zehnova is unscored, so not badged), then
+/// Handy's order from its previous generator.
 /// `(id, rank, recommended)`: rank is the editorial sort position (lower =
 /// higher); recommended is the small badged onboarding subset.
 const HANDY_RANKING: &[(&str, u32, bool)] = &[
-    ("parakeet-unified-en-0.6b", 1, true),
-    ("nemotron-3.5-asr-streaming-0.6b", 2, true),
-    ("canary-180m-flash", 3, true),
-    ("cohere-transcribe-03-2026", 4, true),
-    ("whisper-medium", 5, true),
-    ("Voxtral-Mini-4B-Realtime-2602", 6, false),
-    ("parakeet-tdt-0.6b-v3", 7, false),
-    ("parakeet-tdt-0.6b-v2", 8, false),
-    ("Qwen3-ASR-0.6B", 9, false),
-    ("Fun-ASR-MLT-Nano-2512", 10, false),
+    ("rubaistt-v2-medium", 1, true),
+    ("kotib-uzbek-stt-v1", 2, true),
+    ("navai-whisper-medium-uzbek", 3, true),
+    ("zehnova-uzbek-stt", 4, false),
+    ("parakeet-unified-en-0.6b", 5, true),
+    ("nemotron-3.5-asr-streaming-0.6b", 6, true),
+    ("canary-180m-flash", 7, true),
+    ("cohere-transcribe-03-2026", 8, true),
+    ("whisper-medium", 9, true),
+    ("Voxtral-Mini-4B-Realtime-2602", 10, false),
+    ("parakeet-tdt-0.6b-v3", 11, false),
+    ("parakeet-tdt-0.6b-v2", 12, false),
+    ("Qwen3-ASR-0.6B", 13, false),
+    ("Fun-ASR-MLT-Nano-2512", 14, false),
 ];
 
 #[derive(Deserialize)]
@@ -97,6 +106,20 @@ struct CatalogModel {
     min_engine: Option<String>,
     /// Every published file, keyed by quant.
     files: HashMap<String, CatalogFile>,
+    /// From `shivir.json`: our own repos, not on Handy's mirror.
+    #[serde(skip)]
+    shivir: bool,
+    /// Not uploaded yet (`shivir.json`): listed only while its file is on
+    /// disk, never offered for download.
+    #[serde(default)]
+    unpublished: bool,
+}
+
+/// `shivir.json`: Shivir's models and results in the catalog's own shapes.
+#[derive(Deserialize)]
+struct ShivirCatalog {
+    models: Vec<CatalogModel>,
+    results: HashMap<String, ModelResults>,
 }
 
 #[derive(Deserialize)]
@@ -305,12 +328,24 @@ impl From<&CatalogModel> for ModelDescriptor {
 /// stays out of [`ModelDescriptor`] (mirrors, results) can
 /// be looked up separately.
 static ROOT: Lazy<CatalogRoot> = Lazy::new(|| {
-    let root: CatalogRoot = serde_json::from_str(include_str!("catalog.json"))
+    let mut root: CatalogRoot = serde_json::from_str(include_str!("catalog.json"))
         .expect("bundled catalog.json is valid JSON matching the catalog schema");
     assert_eq!(
         root.schema, SCHEMA,
         "bundled catalog.json has an unsupported schema"
     );
+    let shivir: ShivirCatalog = serde_json::from_str(include_str!("shivir.json"))
+        .expect("bundled shivir.json is valid JSON matching the catalog schema");
+    for mut model in shivir.models {
+        assert!(
+            root.models.iter().all(|m| m.id != model.id),
+            "shivir.json reuses catalog id {}",
+            model.id
+        );
+        model.shivir = true;
+        root.models.push(model);
+    }
+    root.results.extend(shivir.results);
     root
 });
 
@@ -388,7 +423,7 @@ pub struct MirrorFile {
 /// reports it, so listing every quant here costs nothing.)
 pub fn mirror_fallbacks(model_id: &str) -> Vec<MirrorFile> {
     let Some((m, file)) = transcription_models()
-        .filter(|m| m.is_offered())
+        .filter(|m| m.is_offered() && !m.shivir)
         .find_map(|m| {
             m.files
                 .values()
@@ -465,6 +500,14 @@ pub fn file_in_catalog(
             .find(|f| f.filename == filename)
             .map(|f| (d, f))
     })
+}
+
+/// Whether a catalog repo has no uploaded files yet, so its entry may only
+/// stand for a file already on disk.
+pub fn is_unpublished(repo_id: &str) -> bool {
+    ROOT.models
+        .iter()
+        .any(|m| m.unpublished && m.repository == repo_id)
 }
 
 /// Editorial recommended rank keyed by descriptor id (the same id the model
@@ -573,8 +616,20 @@ mod tests {
     fn every_offered_model_has_mirror_fallbacks_with_hashes() {
         // The mirror fallback is the safety net for HF outages and blocked
         // networks; an offered entry without one silently loses that net.
+        let ours: HashSet<String> = transcription_models()
+            .filter(|m| m.shivir)
+            .filter_map(|m| Some(format!("{}/{}", m.repository, m.default_file()?.filename)))
+            .collect();
         for d in CATALOG.iter() {
             let mirrors = mirror_fallbacks(&d.id);
+            if ours.contains(&d.id) {
+                assert!(
+                    mirrors.is_empty(),
+                    "{}: Handy's mirror lacks our files",
+                    d.id
+                );
+                continue;
+            }
             assert!(!mirrors.is_empty(), "{}: no mirror fallbacks", d.id);
             for m in &mirrors {
                 assert_eq!(m.sha256.len(), 64, "{}: mirror entry lacks a sha256", d.id);
@@ -631,6 +686,41 @@ mod tests {
             missing.is_empty(),
             "catalog architecture(s) missing from KNOWN_ARCHES: {:?}",
             missing
+        );
+    }
+
+    #[test]
+    fn shivir_uzbek_models_join_the_catalog_first() {
+        let (desc, file) = file_in_catalog("kotib-uzbek-stt-v1-Q8_0.gguf", None)
+            .expect("a local Kotib file is recognised as the catalog model");
+        assert_eq!(
+            desc.id,
+            "shivir/kotib-uzbek-stt-v1-gguf/kotib-uzbek-stt-v1-Q8_0.gguf"
+        );
+        assert_eq!(file.quant, "Q8_0");
+        assert_eq!(
+            desc.caps.languages.as_deref(),
+            Some(&["uz".to_string()][..])
+        );
+        assert!(desc.recommended);
+        assert!(offers_language("uz"));
+        // Placeholder repos until the upload: never offered for download.
+        assert!(is_unpublished("shivir/kotib-uzbek-stt-v1-gguf"));
+        assert!(!is_unpublished("handy-computer/whisper-medium-gguf"));
+        for id in [
+            "rubaistt-v2-medium",
+            "kotib-uzbek-stt-v1",
+            "navai-whisper-medium-uzbek",
+            "zehnova-uzbek-stt",
+        ] {
+            let m = transcription_models().find(|m| m.id == id).unwrap();
+            assert!(m.shivir && m.is_offered(), "{id}");
+            assert!(ROOT.results.contains_key(id), "{id}: no results entry");
+        }
+        // Uzbek leads the list.
+        assert!(
+            rank_of(&desc.id)
+                < rank_of("handy-computer/whisper-medium-gguf/whisper-medium-Q8_0.gguf")
         );
     }
 

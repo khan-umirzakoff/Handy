@@ -1,5 +1,5 @@
 import type { TFunction } from "i18next";
-import { catalog } from "@handy-computer/models";
+import { catalog } from "@/lib/models/catalog";
 import type { ModelInfo } from "@/bindings";
 import { repoIdOf } from "@/lib/models/retired";
 import {

@@ -1388,6 +1388,7 @@ impl ModelManager {
             || match &model.source {
                 ModelSource::HuggingFace { repo_id, .. } => {
                     Self::is_catalog_alternate_quant(repo_id, &model.filename)
+                        || crate::catalog::is_unpublished(repo_id)
                 }
                 _ => false,
             }
@@ -1397,6 +1398,26 @@ impl ModelManager {
         models
             .get(model_id)
             .is_some_and(|model| model.is_downloaded)
+    }
+
+    /// A custom model's id is its file stem. When the catalog later lists that
+    /// file (Shivir's Uzbek models were dropped-in files first), the same file
+    /// is now a catalog entry: the id the selection should move to.
+    fn catalog_id_for_custom_file(
+        models: &HashMap<String, ModelInfo>,
+        custom_id: &str,
+    ) -> Option<String> {
+        // Only the catalog's own entry for the file: a foreign HF repo that
+        // reuses the filename must not win by HashMap order.
+        crate::catalog::CATALOG
+            .iter()
+            .filter(|d| {
+                d.default_file().is_some_and(|f| {
+                    Path::new(&f.filename).file_stem() == Some(std::ffi::OsStr::new(custom_id))
+                })
+            })
+            .find_map(|d| models.get(&d.id).filter(|m| m.is_downloaded))
+            .map(|m| m.id.clone())
     }
 
     /// Remove a filename's snapshot pointers and unshared blobs from the HF
@@ -1452,10 +1473,22 @@ impl ModelManager {
         // entries stay in the registry so they can be downloaded again, so
         // checking only whether the id exists is not sufficient.
         if !settings.selected_model.is_empty() {
-            let is_available = {
+            let (mut is_available, promoted) = {
                 let models = self.available_models.lock().unwrap();
-                Self::selected_model_is_available(&models, &settings.selected_model)
+                (
+                    Self::selected_model_is_available(&models, &settings.selected_model),
+                    Self::catalog_id_for_custom_file(&models, &settings.selected_model),
+                )
             };
+            if let (false, Some(id)) = (is_available, promoted) {
+                info!(
+                    "Selected custom model '{}' is now the catalog model '{}'; keeping it selected",
+                    settings.selected_model, id
+                );
+                settings.selected_model = id;
+                write_settings(&self.app_handle, settings.clone());
+                is_available = true;
+            }
 
             // A retired model on disk stays selected so the frontend can
             // offer its replacement. It can't load: it isn't in the registry.
@@ -1482,12 +1515,31 @@ impl ModelManager {
         }
 
         // If no model is selected, pick the first downloaded one using the same
-        // ranked order the UI receives.
+        // ranked order the UI receives, preferring one that hears a language
+        // the user speaks (Uzbek-only models lead the order).
         if settings.selected_model.is_empty() {
-            if let Some(available_model) = self
+            let spoken: Vec<String> = settings
+                .spoken_languages
+                .iter()
+                .map(|l| crate::catalog::language_identity(l))
+                .collect();
+            let hears_user = |model: &ModelInfo| {
+                spoken.is_empty()
+                    || model
+                        .supported_languages
+                        .iter()
+                        .any(|l| spoken.contains(&crate::catalog::language_identity(l)))
+            };
+            let downloaded: Vec<ModelInfo> = self
                 .get_available_models()
                 .into_iter()
-                .find(|model| model.is_downloaded)
+                .filter(|model| model.is_downloaded)
+                .collect();
+            if let Some(available_model) = downloaded
+                .iter()
+                .find(|model| hears_user(model))
+                .or(downloaded.first())
+                .cloned()
             {
                 info!(
                     "Auto-selecting model: {} ({})",
@@ -3222,6 +3274,30 @@ mod tests {
             &selection_models,
             &default_info.id
         ));
+        // A selection made when the file was a custom drop-in moves to the
+        // catalog's own entry, never to a foreign repo reusing the filename.
+        let (kotib, _) = crate::catalog::file_in_catalog("kotib-uzbek-stt-v1-Q8_0.gguf", None)
+            .expect("Kotib is in the catalog");
+        let kotib_info = kotib.to_model_info(&DiskStatus {
+            is_downloaded: true,
+            ..Default::default()
+        });
+        let mut foreign = kotib_info.clone();
+        foreign.id = "someone/else-gguf/kotib-uzbek-stt-v1-Q8_0.gguf".to_string();
+        let promoted = HashMap::from([
+            (foreign.id.clone(), foreign),
+            (kotib_info.id.clone(), kotib_info.clone()),
+        ]);
+        assert_eq!(
+            ModelManager::catalog_id_for_custom_file(&promoted, "kotib-uzbek-stt-v1-Q8_0"),
+            Some(kotib_info.id.clone())
+        );
+        assert_eq!(
+            ModelManager::catalog_id_for_custom_file(&selection_models, "model-Q8_0"),
+            None
+        );
+        // Until the upload, an Uzbek entry goes with its file.
+        assert!(ModelManager::disappears_when_missing(&kotib_info));
 
         // The default rendered through the per-file path matches to_model_info,
         // so seeded entries and discovered defaults can never diverge.

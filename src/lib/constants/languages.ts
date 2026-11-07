@@ -2,7 +2,8 @@
  * Spoken languages from the model catalog. Codes are `languageIdentity`s,
  * one spelling per language (no/nb → nb), compared and saved as is.
  */
-import { catalog, languageIdentity } from "@handy-computer/models";
+import { languageIdentity } from "@handy-computer/models";
+import { catalog } from "@/lib/models/catalog";
 
 /** `native` is the endonym, never translated. UI names: `languageName`. */
 export interface Language {

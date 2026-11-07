@@ -1,18 +1,29 @@
 /**
  * Grades, speeds and picks from @handy-computer/models (the same catalog as
- * src-tauri/src/catalog/catalog.json).
+ * src-tauri/src/catalog/catalog.json) plus Shivir's own models
+ * (src-tauri/src/catalog/shivir.json, merged the same way in Rust).
  */
 import {
   accuracyGrade,
-  catalog,
+  catalog as handyCatalog,
+  createCatalog,
   languageIdentity,
   modelMatchesLanguage,
+  type CatalogData,
   type CatalogModel,
   type MachineTier,
 } from "@handy-computer/models";
 import type { GradeLetter } from "@/components/shared/GradeChip";
+import shivir from "../../../src-tauri/src/catalog/shivir.json";
 
 export type { CatalogModel, MachineTier };
+
+/** The one catalog the app reads: Handy's, then Shivir's Uzbek models. */
+export const catalog = createCatalog({
+  ...handyCatalog.data,
+  models: [...handyCatalog.data.models, ...shivir.models],
+  results: { ...handyCatalog.data.results, ...shivir.results },
+} as unknown as CatalogData);
 
 const M = catalog.methodology;
 
@@ -93,20 +104,49 @@ const PACKAGE_ROLES = [
   ["accurate", "accurate"],
 ] as const;
 
-/** The package's picks for these languages, one per model, limited to `offered`. */
+const SHIVIR_UZBEK = shivir.models.map((m) => m.id);
+
+/** The most accurate offered Shivir Uzbek model, when Uzbek is one of `languages`. */
+const uzbekPick = (
+  languages: string[],
+  offered: (model: CatalogModel) => boolean,
+): CatalogModel | undefined =>
+  languages.some((l) => languageIdentity(l) === "uz")
+    ? catalog.curatedModels
+        .filter((m) => SHIVIR_UZBEK.includes(m.id) && offered(m))
+        .filter((m) => errorFor(m, "uz") != null)
+        .sort((a, b) => errorFor(a, "uz")! - errorFor(b, "uz")!)[0]
+    : undefined;
+
+/**
+ * The package's picks for these languages, one per model, limited to `offered`.
+ * Shivir is Uzbek-first: when Uzbek is chosen, the best Uzbek model is the pick
+ * even though it misses the other languages, because the package only picks
+ * models that hear all of them and those score F on Uzbek.
+ */
 export const picksFor = (
   languages: string[],
   offered: (model: CatalogModel) => boolean,
-): ModelPick[] =>
-  catalog
+): ModelPick[] => {
+  const picks = catalog
     .recommend(languages)
     .filter((r) => offered(r.model))
     .map((r) => {
       const role = PACKAGE_ROLES.find(([p]) => r.roles.includes(p))?.[1];
       return role ? { model: r.model, role } : null;
     })
-    .filter((p): p is ModelPick => p !== null)
-    .sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role));
+    .filter((p): p is ModelPick => p !== null);
+  const uzbek = uzbekPick(languages, offered);
+  const ordered = uzbek
+    ? [
+        { model: uzbek, role: "pick" as const },
+        ...picks.filter((p) => p.role !== "pick" && p.model.id !== uzbek.id),
+      ]
+    : picks;
+  return ordered.sort(
+    (a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role),
+  );
+};
 
 /** Usable models for these languages, ordered by the package's overall cost on this tier. */
 const rankFor = (
