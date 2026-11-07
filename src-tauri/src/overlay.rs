@@ -4,7 +4,7 @@ use crate::settings;
 use crate::settings::{OverlayPosition, OverlayStyle};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
 #[cfg(not(target_os = "macos"))]
@@ -64,9 +64,6 @@ fn stage_size(app_handle: &AppHandle, position: OverlayPosition) -> (f64, f64) {
     }
 }
 
-static LAST_MIC_LEVEL_EMIT: AtomicU64 = AtomicU64::new(0);
-const EMIT_THROTTLE_MS: u64 = 33; // ~30 FPS
-
 // 0 resting, 1 recording-ptt, 2 streaming, 3 transcribing, 4 processing,
 // 5 error, 6 recording-toggle, 7 paste-recovery, 8 notice.
 // Geometry updates can happen independently of state events (settings change,
@@ -82,7 +79,29 @@ static FLOW_BAR_HIT_TEST_STARTED: AtomicBool = AtomicBool::new(false);
 static FLOW_BAR_ACCEPTS_MOUSE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(target_os = "macos")]
-const FLOW_BAR_HIT_TEST_INTERVAL_MS: u64 = 50;
+// One display frame, so hover reaches the bar as fast as Flow's DOM mouseenter
+// (research/pill-smoothness.md §4).
+const FLOW_BAR_HIT_TEST_INTERVAL_MS: u64 = 16;
+
+#[cfg(target_os = "macos")]
+const FLOW_BAR_HOVER_HEARTBEAT: Duration = Duration::from_secs(1);
+
+// Window getters are main-thread round trips; the stage only moves on a dock
+// change or display change, so re-read it every 15 ticks (~250 ms), not 60×/s.
+#[cfg(target_os = "macos")]
+const FLOW_BAR_GEOMETRY_EVERY_TICKS: u32 = 15;
+
+/// The stage in logical points, or `None` while the panel is hidden.
+#[cfg(target_os = "macos")]
+fn stage_geometry(window: &tauri::WebviewWindow) -> Option<(f64, f64, f64, f64)> {
+    if !window.is_visible().unwrap_or(false) {
+        return None;
+    }
+    let scale = window.scale_factor().ok()?;
+    let position = window.outer_position().ok()?.to_logical::<f64>(scale);
+    let size = window.outer_size().ok()?.to_logical::<f64>(scale);
+    Some((position.x, position.y, size.width, size.height))
+}
 
 /// A rectangle (stage coordinates, logical points) that catches the mouse.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, specta::Type)]
@@ -103,6 +122,10 @@ impl CatchRect {
 /// pill, an open card, or the whole stage while dragging.
 static CATCH_RECTS: Mutex<Vec<CatchRect>> = Mutex::new(Vec::new());
 
+/// Set with every report: drags and dock changes resize the stage, so the hit
+/// test re-reads its geometry at once instead of on its next slow refresh.
+static STAGE_GEOMETRY_STALE: AtomicBool = AtomicBool::new(true);
+
 /// The renderer reports its interactive rectangles whenever they change.
 #[tauri::command]
 #[specta::specta]
@@ -110,6 +133,7 @@ pub fn report_bar_catch_rects(rects: Vec<CatchRect>) {
     if let Ok(mut current) = CATCH_RECTS.lock() {
         *current = rects;
     }
+    STAGE_GEOMETRY_STALE.store(true, Ordering::Release);
 }
 
 #[cfg(target_os = "macos")]
@@ -120,6 +144,9 @@ fn start_flowbar_hit_test(app_handle: &AppHandle) {
 
     let app = app_handle.clone();
     tauri::async_runtime::spawn(async move {
+        let mut last_beat = std::time::Instant::now();
+        let mut geometry = None;
+        let mut tick: u32 = 0;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(
                 FLOW_BAR_HIT_TEST_INTERVAL_MS,
@@ -130,36 +157,31 @@ fn start_flowbar_hit_test(app_handle: &AppHandle) {
                 FLOW_BAR_ACCEPTS_MOUSE.store(false, Ordering::Relaxed);
                 continue;
             };
-            if !window.is_visible().unwrap_or(false) {
-                continue;
+            if tick % FLOW_BAR_GEOMETRY_EVERY_TICKS == 0
+                || STAGE_GEOMETRY_STALE.swap(false, Ordering::AcqRel)
+            {
+                geometry = stage_geometry(&window);
             }
+            tick = tick.wrapping_add(1);
+            let Some((stage_x, stage_y, stage_w, stage_h)) = geometry else {
+                continue;
+            };
 
             // Enigo is deliberately initialized only after onboarding. Until it
             // exists, retain normal panel mouse handling instead of making the
-            // overlay unreachable.
+            // overlay unreachable. No native hover event here: the renderer
+            // then keeps using DOM hover, which works while events are on.
             let Some((cursor_x, cursor_y)) = input::get_cursor_position(&app) else {
                 if !FLOW_BAR_ACCEPTS_MOUSE.swap(true, Ordering::AcqRel) {
                     let _ = window.set_ignore_cursor_events(false);
-                    let _ = window.emit("flowbar-native-hover", true);
                 }
                 continue;
             };
-            let Ok(scale) = window.scale_factor() else {
-                continue;
-            };
-            let Ok(position) = window.outer_position() else {
-                continue;
-            };
-            let Ok(size) = window.outer_size() else {
-                continue;
-            };
-            let position = position.to_logical::<f64>(scale);
-            let size = size.to_logical::<f64>(scale);
-            let local_x = cursor_x as f64 - position.x;
-            let local_y = cursor_y as f64 - position.y;
+            let local_x = cursor_x as f64 - stage_x;
+            let local_y = cursor_y as f64 - stage_y;
             let was_accepting = FLOW_BAR_ACCEPTS_MOUSE.load(Ordering::Relaxed);
             let inside_stage =
-                local_x >= 0.0 && local_y >= 0.0 && local_x < size.width && local_y < size.height;
+                local_x >= 0.0 && local_y >= 0.0 && local_x < stage_w && local_y < stage_h;
             let should_accept = inside_stage
                 && CATCH_RECTS
                     .lock()
@@ -183,9 +205,12 @@ fn start_flowbar_hit_test(app_handle: &AppHandle) {
             // already-hovered click-through NSPanel starts accepting events.
             // Flow's Electron window gets forwarded mouse movement here; our
             // native bridge reports the same catch-rect state explicitly.
-            // Repeating the tiny boolean heartbeat also covers renderer reloads
-            // that may have missed the first transition during startup.
-            let _ = window.emit("flowbar-native-hover", should_accept);
+            // A once-a-second repeat covers renderer reloads that missed the
+            // transition; every tick would be 60 webview evals a second.
+            if should_accept != was_accepting || last_beat.elapsed() >= FLOW_BAR_HOVER_HEARTBEAT {
+                last_beat = std::time::Instant::now();
+                let _ = window.emit("flowbar-native-hover", should_accept);
+            }
         }
     });
 }
@@ -604,6 +629,49 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     }
 }
 
+/// WebKit draws at 30 fps in Low Power Mode and near 60 on 120 Hz screens;
+/// Flow's Chromium bar does neither, so our 100 ms pill motions lost most of
+/// their frames (research/pill-smoothness.md §1). This is the switch Safari's
+/// Feature Flags list uses.
+/// shortcut: private WebKit SPI; drop it for a Mac App Store build.
+#[cfg(target_os = "macos")]
+fn unlock_overlay_frame_rate(window: &tauri::WebviewWindow) {
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2::{msg_send, sel};
+    use objc2_foundation::NSString;
+    const KEY: &str = "PreferPageRenderingUpdatesNear60FPSEnabled";
+
+    let result = window.with_webview(|webview| unsafe {
+        let Some(class) = AnyClass::get(c"WKPreferences") else {
+            return;
+        };
+        let wk = webview.inner() as *mut AnyObject;
+        let config: *mut AnyObject = msg_send![wk, configuration];
+        let prefs: *mut AnyObject = msg_send![config, preferences];
+        let has_list: bool = msg_send![class, respondsToSelector: sel!(_features)];
+        let can_set: bool = msg_send![prefs, respondsToSelector: sel!(_setEnabled:forFeature:)];
+        if !has_list || !can_set {
+            log::warn!("Overlay WebKit has no feature-flag SPI; bar stays at WebKit's frame rate");
+            return;
+        }
+        let features: *mut AnyObject = msg_send![class, _features];
+        let count: usize = msg_send![features, count];
+        for i in 0..count {
+            let feature: *mut AnyObject = msg_send![features, objectAtIndex: i];
+            let key: *const NSString = msg_send![feature, key];
+            if !key.is_null() && (*key).to_string() == KEY {
+                let _: () = msg_send![prefs, _setEnabled: false, forFeature: feature];
+                log::info!("Overlay WebKit: {KEY} turned off");
+                return;
+            }
+        }
+        log::warn!("Overlay WebKit: feature {KEY} not found");
+    });
+    if let Err(e) = result {
+        log::warn!("Overlay WebKit frame-rate switch failed: {e}");
+    }
+}
+
 #[cfg(target_os = "macos")]
 pub fn create_recording_overlay(app_handle: &AppHandle) {
     let settings = settings::get_settings(app_handle);
@@ -650,6 +718,9 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
                     if let Some(window) = app_handle.get_webview_window("recording_overlay") {
                         let _ = window.emit("show-overlay", "resting");
                     }
+                }
+                if let Some(window) = app_handle.get_webview_window("recording_overlay") {
+                    unlock_overlay_frame_rate(&window);
                 }
                 start_flowbar_hit_test(app_handle);
             }
@@ -1071,7 +1142,14 @@ pub fn update_overlay_enabled_cache(enabled: bool) {
     OVERLAY_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
-pub fn emit_levels(app_handle: &AppHandle, levels: &[f32]) {
+/// What the bar's waveform gets every 150 ms (`mic-level`).
+#[derive(Clone, Copy, serde::Serialize)]
+struct MicLevel {
+    level: f32,
+    speech: bool,
+}
+
+pub fn emit_levels(app_handle: &AppHandle, level: f32, speech: bool) {
     // Skip emission when the overlay is disabled. The recording_overlay
     // window is created at boot regardless of overlay_style, so without this
     // guard a hidden overlay's WebKit subprocess still
@@ -1084,19 +1162,9 @@ pub fn emit_levels(app_handle: &AppHandle, levels: &[f32]) {
         return;
     }
 
-    // Throttle to ~30 FPS. Even with the overlay enabled, the raw audio
-    // callback fires far faster than the UI needs; capping emission rate
-    // cuts the per-frame `eval_script`/IPC volume that drives the wry
-    // memory growth in issue #1279 (upstream tauri-apps/wry#1489).
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    let last = LAST_MIC_LEVEL_EMIT.load(Ordering::Relaxed);
-    if now.saturating_sub(last) < EMIT_THROTTLE_MS {
-        return;
-    }
-    LAST_MIC_LEVEL_EMIT.store(now, Ordering::Relaxed);
+    // The meter reports every 150 ms, which already keeps the per-event
+    // `eval_script` volume behind the wry memory growth (issue #1279,
+    // tauri-apps/wry#1489) far below the old 30 Hz throttle.
 
     // Target only the overlay window. In Tauri 2 both `AppHandle::emit`
     // and `WebviewWindow::emit` broadcast to all webviews; Tauri's
@@ -1107,7 +1175,7 @@ pub fn emit_levels(app_handle: &AppHandle, levels: &[f32]) {
     // `emit_to` with the overlay's window label produces a single
     // eval_script call per callback, cutting the per-callback WebKit
     // dispatch work in half.
-    let _ = app_handle.emit_to("recording_overlay", "mic-level", levels);
+    let _ = app_handle.emit_to("recording_overlay", "mic-level", MicLevel { level, speech });
 }
 
 #[cfg(test)]

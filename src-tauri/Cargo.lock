@@ -2492,7 +2492,6 @@ dependencies = [
  "rubato",
  "rusqlite",
  "rusqlite_migration",
- "rustfft",
  "serde",
  "serde_json",
  "sha2",

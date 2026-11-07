@@ -531,7 +531,7 @@ impl AudioRecordingManager {
 
         let on_levels: LevelCallback = {
             let app_handle = app.clone();
-            Arc::new(move |levels| utils::emit_levels(&app_handle, &levels))
+            Arc::new(move |level, speech| utils::emit_levels(&app_handle, level, speech))
         };
         let on_audio: AudioFrameCallback = Arc::new(move |frame| stream_router.feed(frame));
 

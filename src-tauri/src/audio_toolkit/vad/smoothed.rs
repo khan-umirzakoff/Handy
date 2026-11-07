@@ -127,6 +127,10 @@ impl VoiceActivityDetector for SmoothedVad {
         self.hangover_frames = frames;
     }
 
+    fn last_frame_voiced(&self) -> Option<bool> {
+        self.frame_buffer.back().map(|f| f.voiced)
+    }
+
     /// Trailing run of withheld frames plus smoothing state. Interior
     /// withheld frames (before already-emitted speech) are not counted.
     fn tail_report(&self) -> Option<VadTailReport> {
@@ -233,5 +237,16 @@ mod tests {
         let report = vad.tail_report().unwrap();
         assert_eq!(report.withheld_frames, 2);
         assert_eq!(report.withheld_voiced_frames, 0);
+    }
+
+    #[test]
+    fn hangover_keeps_audio_but_reports_the_frame_unvoiced() {
+        let mut vad = smoothed(&[true, true, false], 2);
+        assert_eq!(vad.last_frame_voiced(), None);
+        let _ = vad.push_frame(&frame(0.1)).unwrap();
+        assert!(vad.push_frame(&frame(0.2)).unwrap().is_speech());
+        assert_eq!(vad.last_frame_voiced(), Some(true));
+        assert!(vad.push_frame(&frame(0.3)).unwrap().is_speech()); // hangover
+        assert_eq!(vad.last_frame_voiced(), Some(false));
     }
 }

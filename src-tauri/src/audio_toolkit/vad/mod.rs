@@ -52,6 +52,13 @@ pub trait VoiceActivityDetector: Send + Sync {
         None
     }
 
+    /// Whether the newest frame itself was voiced, before onset and hangover
+    /// smoothing. The bar dims in pauses that the hangover still keeps for
+    /// transcription. Detectors without smoothing return None.
+    fn last_frame_voiced(&self) -> Option<bool> {
+        None
+    }
+
     fn reset(&mut self) {}
 }
 

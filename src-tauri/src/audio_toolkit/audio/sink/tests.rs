@@ -56,7 +56,7 @@ fn harness(policy: VadPolicy) -> Harness {
         let fed = Arc::clone(&fed);
         Arc::new(move |frame: &[f32]| fed.lock().unwrap().extend_from_slice(frame))
     };
-    let on_levels: LevelCallback = Arc::new(|_| {});
+    let on_levels: LevelCallback = Arc::new(|_, _| {});
     let (ready_tx, ready) = mpsc::channel();
     let sink = CaptureSink::new(
         CaptureVad::new(Box::new(vad), 10, 20),

@@ -50,9 +50,7 @@ const BAR_DELAY = Array.from(
   (_, i) => 0.1 * (i < Math.ceil(BARS / 2) ? i : i - BARS),
 );
 const WAVE_GAIN = 5; // §5.3 dictation gain
-// shortcut: Flow feeds an adaptive dB-floor level; we lift the RMS of Handy's
-// 16 spectrum buckets instead. Tune once real recordings are in.
-const LEVEL_LIFT = 1.6;
+const FRAME_MS = 1000 / 60; // Flow's smoothing step: 0.85 kept per 60 Hz frame
 const HOVER_LOCK_MS = 100; // §4.2
 const TIP_AFTER_READY_MS = 150;
 const TIP_ON_TARGET_MS = 50;
@@ -136,6 +134,9 @@ const Bar: React.FC = () => {
       );
   }, [osType]);
   const [rawHover, setRawHover] = useState(false);
+  // macOS reports hover natively (catch rects, +12 px while ready, §1.1); once
+  // it does, DOM enter/leave would fight it at the padded edge, so it wins.
+  const nativeHover = useRef(false);
   const hovered = useDebouncedHover(rawHover);
   const [tip, setTip] = useState<{ kind: TipKind; anchor: HTMLElement } | null>(
     null,
@@ -224,15 +225,18 @@ const Bar: React.FC = () => {
       })
       .then((off) => (alive ? offs.push(off) : off()));
     void on("hide-overlay", () => setEnabled(false));
-    void on("recording-ready", () => setMicActive(true));
     void on<string>("overlay-position-changed", (e) => setEdge(edgeOf(e)));
-    void on<boolean>("flowbar-native-hover", (h) => setRawHover(h));
-    void on<number[]>("mic-level", (buckets) => {
-      const v = buckets.filter(Number.isFinite);
-      const rms = v.length
-        ? Math.sqrt(v.reduce((a, b) => a + b * b, 0) / v.length)
-        : 0;
-      levelTarget.current = Math.min(1, rms * LEVEL_LIFT);
+    void on<boolean>("flowbar-native-hover", (h) => {
+      nativeHover.current = true;
+      setRawHover(h);
+    });
+    // Every 150 ms from Rust: Flow's floor-scaled level plus VAD. Like Flow's
+    // MicActive/MicSilence, silence dims the bars and stops the ripple (§5.2).
+    void on<{ level: number; speech: boolean }>("mic-level", (m) => {
+      const live = nativeRef.current === "ptt" || nativeRef.current === "popo";
+      if (!live) return;
+      setMicActive(m.speech);
+      levelTarget.current = m.speech ? Math.min(1, Math.max(0, m.level)) : 0;
       startLevelLoop();
     });
     void on<Notice>("overlay-notice", (n) => {
@@ -256,13 +260,19 @@ const Bar: React.FC = () => {
   }, []);
 
   // ---- §5.3 waveform level: rAF low-pass written to --audio-scale -----------
+  // Time-based like Flow's ticker loop (dt clamped to 1..200 ms), so a 30 or
+  // 120 Hz display responds the same as Flow's dictation bar at 60 Hz.
   const startLevelLoop = useCallback(() => {
     if (levelFrame.current) return;
-    const tick = () => {
-      const cur =
-        Math.floor(
-          100 * (0.85 * levelCur.current + 0.15 * levelTarget.current),
-        ) / 100;
+    let last = 0;
+    const tick = (now: number) => {
+      const dt = last ? Math.min(200, Math.max(1, now - last)) : FRAME_MS;
+      last = now;
+      const keep = Math.pow(0.85, dt / FRAME_MS);
+      const next = keep * levelCur.current + (1 - keep) * levelTarget.current;
+      // Full precision: rounding each step (as Flow does at a fixed rate)
+      // would stall short of the target sooner on faster displays.
+      const cur = levelTarget.current === 0 && next < 0.005 ? 0 : next;
       levelCur.current = cur;
       waveRef.current?.style.setProperty(
         "--audio-scale",
@@ -669,9 +679,11 @@ const Bar: React.FC = () => {
             <div
               ref={hotAreaRef}
               className="hot-area"
-              onMouseEnter={() => setRawHover(true)}
+              onMouseEnter={() => {
+                if (!nativeHover.current) setRawHover(true);
+              }}
               onMouseLeave={() => {
-                setRawHover(false);
+                if (!nativeHover.current) setRawHover(false);
                 hideTip();
               }}
             >

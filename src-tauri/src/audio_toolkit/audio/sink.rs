@@ -3,7 +3,7 @@ use std::sync::{mpsc, Arc};
 use handy_recorder::{AudioChunk, Sink};
 
 use crate::audio_toolkit::{
-    audio::AudioVisualiser,
+    audio::level::LevelMeter,
     constants,
     vad::{VadFrame, VoiceActivityDetector},
 };
@@ -61,8 +61,9 @@ impl CaptureVad {
     }
 }
 
-/// Receives spectrum levels for the recording overlay.
-pub type LevelCallback = Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>;
+/// Receives the bar's mic level (0..1, every 150 ms) and whether VAD hears
+/// speech right now.
+pub type LevelCallback = Arc<dyn Fn(f32, bool) + Send + Sync + 'static>;
 /// Receives each 16 kHz mono frame that passes the recording's VAD policy, in
 /// order. Used to feed live streaming transcription as audio arrives.
 pub type AudioFrameCallback = Arc<dyn Fn(&[f32]) + Send + Sync + 'static>;
@@ -84,7 +85,10 @@ pub struct CapturedAudio {
 pub struct CaptureSink {
     vad: CaptureVad,
     policy: VadPolicy,
-    visualizer: AudioVisualiser,
+    meter: LevelMeter,
+    /// A voiced frame since the last level report (raw verdict, not the
+    /// hangover kept for transcription). `Disabled` runs no VAD: always true.
+    voiced: bool,
     on_levels: LevelCallback,
     on_audio: AudioFrameCallback,
     /// Signalled on the first chunk: the device is delivering audio. Silence
@@ -93,10 +97,6 @@ pub struct CaptureSink {
     samples: Vec<f32>,
     heard_sound: bool,
 }
-
-/// Spectrum window at 16 kHz: 32 ms, near the overlay's ~30 Hz refresh.
-const VISUALIZER_WINDOW: usize = 512;
-const VISUALIZER_BUCKETS: usize = 16;
 
 impl CaptureSink {
     /// A sink for one recording. Resets the detector and applies the policy's
@@ -116,13 +116,8 @@ impl CaptureSink {
         Self {
             vad,
             policy,
-            visualizer: AudioVisualiser::new(
-                constants::WHISPER_SAMPLE_RATE,
-                VISUALIZER_WINDOW,
-                VISUALIZER_BUCKETS,
-                400.0,
-                4000.0,
-            ),
+            meter: LevelMeter::new(),
+            voiced: policy == VadPolicy::Disabled,
             on_levels,
             on_audio,
             ready: Some(ready),
@@ -180,25 +175,31 @@ impl Sink for CaptureSink {
 
         // Mono by construction: the recorder mixes down or picks one channel.
         let real = &chunk.samples[..chunk.valid_frames];
-        if let Some(levels) = self.visualizer.feed(real) {
-            (self.on_levels)(levels);
-        }
+        let level = self.meter.feed(real);
 
         if self.policy == VadPolicy::Disabled {
             Self::emit(&mut self.samples, &self.on_audio, real);
-            return;
+        } else {
+            // The detector needs whole frames, so the final chunk goes in with its
+            // zero padding; at most one frame of silence reaches the recording.
+            let kept = match self
+                .vad
+                .detector
+                .push_frame(chunk.samples)
+                .unwrap_or(VadFrame::Speech(chunk.samples))
+            {
+                VadFrame::Speech(frame) => {
+                    Self::emit(&mut self.samples, &self.on_audio, frame);
+                    true
+                }
+                VadFrame::Noise => false,
+            };
+            self.voiced |= self.vad.detector.last_frame_voiced().unwrap_or(kept);
         }
 
-        // The detector needs whole frames, so the final chunk goes in with its
-        // zero padding; at most one frame of silence reaches the recording.
-        match self
-            .vad
-            .detector
-            .push_frame(chunk.samples)
-            .unwrap_or(VadFrame::Speech(chunk.samples))
-        {
-            VadFrame::Speech(frame) => Self::emit(&mut self.samples, &self.on_audio, frame),
-            VadFrame::Noise => {}
+        if let Some(level) = level {
+            (self.on_levels)(level, self.voiced);
+            self.voiced = self.policy == VadPolicy::Disabled;
         }
     }
 }
