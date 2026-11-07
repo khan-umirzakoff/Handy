@@ -1,70 +1,10 @@
 {
-  "note": "Shivir's own models, merged after Handy's catalog.json by src-tauri/src/catalog/mod.rs and src/lib/models/catalog.ts. Repositories and the 'main' revision are placeholders until the GGUF files are uploaded to Hugging Face; until then `unpublished` keeps each model listed only while its file is in the app's models folder. The uz error is the leaderboard macro WER from the model cards and the Uzbek ASR leaderboard (research/uzbek-models.md), not a Shivir measurement and not FLEURS test like Handy's; rubaiSTT's includes FLEURS test in training. Zehnova has no published score. Performance copies whisper-medium: the same network at the same quant.",
+  "note": "Shivir's own models, merged after Handy's catalog.json by src-tauri/src/catalog/mod.rs and src/lib/models/catalog.ts. Repositories and the 'main' revision are placeholders until the GGUF files are uploaded to Hugging Face (tools/models/upload_uzbek_models.sh); until then `unpublished` keeps each model listed only while its file is in the app's models folder. The uz error is our own WER on the first 100 FLEURS uz_uz dev clips (tools/models/eval_fleurs_uz.py, 2026-11-07: greedy, uz forced, no timestamps, as the app's profile runs them; research/uzbek-models.md), not FLEURS test like Handy's. Performance copies whisper-medium: the same network at the same quant.",
   "models": [
-    {
-      "id": "rubaistt-v2-medium",
-      "name": "rubaiSTT v2",
-      "description": "Uzbek, best leaderboard score (8.6% WER); Tashkent speech, news and IT",
-      "repository": "shivir/rubaistt-v2-medium-gguf",
-      "revision": "main",
-      "unpublished": true,
-      "previousRevisions": [],
-      "license": "apache-2.0",
-      "family": "whisper",
-      "parameters": "764M",
-      "languages": ["uz"],
-      "capabilities": {
-        "streaming": false,
-        "translate": false,
-        "languageDetection": false,
-        "timestamps": true
-      },
-      "quant": "Q8_0",
-      "role": "asr",
-      "curated": true,
-      "minEngine": "0.4.0",
-      "files": {
-        "Q8_0": {
-          "filename": "rubaistt-v2-medium-Q8_0.gguf",
-          "size": 831538240,
-          "sha256": "b1b468f9ef894e3049669ace9253057d869eb7c2797abea9d270559ec1af15d1"
-        }
-      }
-    },
-    {
-      "id": "kotib-uzbek-stt-v1",
-      "name": "Kotib v1",
-      "description": "Uzbek, trained on about 1,600 hours (9.6% WER)",
-      "repository": "shivir/kotib-uzbek-stt-v1-gguf",
-      "revision": "main",
-      "unpublished": true,
-      "previousRevisions": [],
-      "license": "apache-2.0",
-      "family": "whisper",
-      "parameters": "764M",
-      "languages": ["uz"],
-      "capabilities": {
-        "streaming": false,
-        "translate": false,
-        "languageDetection": false,
-        "timestamps": true
-      },
-      "quant": "Q8_0",
-      "role": "asr",
-      "curated": true,
-      "minEngine": "0.4.0",
-      "files": {
-        "Q8_0": {
-          "filename": "kotib-uzbek-stt-v1-Q8_0.gguf",
-          "size": 831538240,
-          "sha256": "ca1109ab5bdbc652048cab9201d5bcc87d2df5b151c0a0ff10b68e911db7397e"
-        }
-      }
-    },
     {
       "id": "navai-whisper-medium-uzbek",
       "name": "NavAI Medium",
-      "description": "Uzbek, human transcripts only; writes numbers as words (9.7% WER)",
+      "description": "Uzbek, human transcripts only; writes numbers as words",
       "repository": "shivir/navai-whisper-medium-uzbek-gguf",
       "revision": "main",
       "unpublished": true,
@@ -92,9 +32,39 @@
       }
     },
     {
+      "id": "kotib-uzbek-stt-v1",
+      "name": "Kotib v1",
+      "description": "Uzbek, trained on about 1,600 hours",
+      "repository": "shivir/kotib-uzbek-stt-v1-gguf",
+      "revision": "main",
+      "unpublished": true,
+      "previousRevisions": [],
+      "license": "apache-2.0",
+      "family": "whisper",
+      "parameters": "764M",
+      "languages": ["uz"],
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "languageDetection": false,
+        "timestamps": true
+      },
+      "quant": "Q8_0",
+      "role": "asr",
+      "curated": true,
+      "minEngine": "0.4.0",
+      "files": {
+        "Q8_0": {
+          "filename": "kotib-uzbek-stt-v1-Q8_0.gguf",
+          "size": 831538240,
+          "sha256": "ca1109ab5bdbc652048cab9201d5bcc87d2df5b151c0a0ff10b68e911db7397e"
+        }
+      }
+    },
+    {
       "id": "zehnova-uzbek-stt",
       "name": "Zehnova",
-      "description": "Uzbek, Kotib v1 tuned on 16 more hours; not scored yet",
+      "description": "Uzbek, Kotib v1 tuned on 16 more hours; fewest letter errors",
       "repository": "shivir/zehnova-uzbek-stt-gguf",
       "revision": "main",
       "unpublished": true,
@@ -120,24 +90,82 @@
           "sha256": "5d7a8e20bda5135d8a419da15fcfdec48ba11adf495923e1af715f35e6d162b2"
         }
       }
+    },
+    {
+      "id": "rubaistt-v2-medium",
+      "name": "rubaiSTT v2",
+      "description": "Uzbek, from the team behind Kotib; Tashkent speech, news and IT",
+      "repository": "shivir/rubaistt-v2-medium-gguf",
+      "revision": "main",
+      "unpublished": true,
+      "previousRevisions": [],
+      "license": "apache-2.0",
+      "family": "whisper",
+      "parameters": "764M",
+      "languages": ["uz"],
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "languageDetection": false,
+        "timestamps": true
+      },
+      "quant": "Q8_0",
+      "role": "asr",
+      "curated": true,
+      "minEngine": "0.4.0",
+      "files": {
+        "Q8_0": {
+          "filename": "rubaistt-v2-medium-Q8_0.gguf",
+          "size": 831538240,
+          "sha256": "b1b468f9ef894e3049669ace9253057d869eb7c2797abea9d270559ec1af15d1"
+        }
+      }
     }
   ],
   "results": {
-    "rubaistt-v2-medium": {
-      "accuracy": { "uz": { "error": 8.57 } },
-      "performance": { "accelerated": 4.085, "cpu": 1.925 }
+    "navai-whisper-medium-uzbek": {
+      "accuracy": {
+        "uz": {
+          "error": 14.23
+        }
+      },
+      "performance": {
+        "accelerated": 4.085,
+        "cpu": 1.925
+      }
     },
     "kotib-uzbek-stt-v1": {
-      "accuracy": { "uz": { "error": 9.62 } },
-      "performance": { "accelerated": 4.085, "cpu": 1.925 }
-    },
-    "navai-whisper-medium-uzbek": {
-      "accuracy": { "uz": { "error": 9.73 } },
-      "performance": { "accelerated": 4.085, "cpu": 1.925 }
+      "accuracy": {
+        "uz": {
+          "error": 15.54
+        }
+      },
+      "performance": {
+        "accelerated": 4.085,
+        "cpu": 1.925
+      }
     },
     "zehnova-uzbek-stt": {
-      "accuracy": {},
-      "performance": { "accelerated": 4.085, "cpu": 1.925 }
+      "accuracy": {
+        "uz": {
+          "error": 15.84
+        }
+      },
+      "performance": {
+        "accelerated": 4.085,
+        "cpu": 1.925
+      }
+    },
+    "rubaistt-v2-medium": {
+      "accuracy": {
+        "uz": {
+          "error": 17.51
+        }
+      },
+      "performance": {
+        "accelerated": 4.085,
+        "cpu": 1.925
+      }
     }
   }
 }

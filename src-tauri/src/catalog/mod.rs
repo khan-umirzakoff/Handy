@@ -40,15 +40,15 @@ const SCHEMA: u32 = 2;
 const MIRRORS: &[&str] = &["https://blob.handy.computer"];
 
 /// The list order and onboarding set, keyed by catalog id: Shivir's Uzbek
-/// models first (an Uzbek-first app; Zehnova is unscored, so not badged), then
+/// models first (an Uzbek-first app), by our FLEURS WER (shivir.json), then
 /// Handy's order from its previous generator.
 /// `(id, rank, recommended)`: rank is the editorial sort position (lower =
 /// higher); recommended is the small badged onboarding subset.
 const HANDY_RANKING: &[(&str, u32, bool)] = &[
-    ("rubaistt-v2-medium", 1, true),
+    ("navai-whisper-medium-uzbek", 1, true),
     ("kotib-uzbek-stt-v1", 2, true),
-    ("navai-whisper-medium-uzbek", 3, true),
-    ("zehnova-uzbek-stt", 4, false),
+    ("zehnova-uzbek-stt", 3, true),
+    ("rubaistt-v2-medium", 4, true),
     ("parakeet-unified-en-0.6b", 5, true),
     ("nemotron-3.5-asr-streaming-0.6b", 6, true),
     ("canary-180m-flash", 7, true),
