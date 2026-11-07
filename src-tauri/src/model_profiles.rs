@@ -13,11 +13,16 @@
 //! Kotib's beam 5 and NavAI/Zehnova's no_repeat_ngram are not applied; revisit
 //! after the benchmark.
 
-use transcribe_cpp::{RunExtension, WhisperRunOptions};
+use transcribe_cpp::{RunExtension, TimestampKind, WhisperRunOptions};
 
 pub struct ModelProfile {
     /// Language the model must always be told, whatever the user picked.
     pub language: &'static str,
+    /// The fine-tunes were trained without timestamp tokens; decoding with
+    /// them (the engine's Auto) drops the first word in most clips. Measured
+    /// on 20 FLEURS uz clips, NavAI: 23.6 % WER with, 12.1 % without
+    /// (research/uzbek-models.md, "Our FLEURS measurement").
+    pub timestamps: TimestampKind,
     pub whisper: WhisperRunOptions,
 }
 
@@ -31,6 +36,7 @@ const UZBEK_VARIANTS: &[&str] = &[
 pub fn for_variant(variant: &str) -> Option<ModelProfile> {
     UZBEK_VARIANTS.contains(&variant).then(|| ModelProfile {
         language: "uz",
+        timestamps: TimestampKind::None,
         whisper: WhisperRunOptions {
             temperature: Some(0.0),
             temperature_inc: Some(0.2),
@@ -57,6 +63,7 @@ mod tests {
         assert_eq!(p.language, "uz");
         assert_eq!(p.whisper.temperature_inc, Some(0.2));
         assert_eq!(p.whisper.no_speech_thold, Some(0.25));
+        assert!(matches!(p.timestamps, TimestampKind::None));
         assert!(for_variant("whisper-medium").is_none());
     }
 }

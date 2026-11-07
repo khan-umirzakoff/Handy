@@ -1360,6 +1360,9 @@ fn run_setup(info: &LoadedInfo, settings: &AppSettings, language: LanguageDecisi
         target_language: run_plan.target_language,
         vocabulary: vocabulary_for_model(info.supports_vocabulary, &settings.custom_words),
         family: profile.as_ref().map(|p| p.run_extension()),
+        timestamps: profile
+            .as_ref()
+            .map_or_else(Default::default, |p| p.timestamps),
         ..Default::default()
     };
 
