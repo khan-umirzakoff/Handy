@@ -23,6 +23,11 @@ pub struct ModelProfile {
     /// on 20 FLEURS uz clips, NavAI: 23.6 % WER with, 12.1 % without
     /// (research/uzbek-models.md, "Our FLEURS measurement").
     pub timestamps: TimestampKind,
+    /// Silence put before each take. VAD hands over speech that starts about
+    /// 0.4 s in; NavAI then dropped the take's first word and added words to
+    /// one-word takes ("baʼzida" -> "baʼzida uchta"); with 1 s of lead-in it
+    /// wrote all three of the owner's takes right (300 ms was not enough).
+    pub lead_in_ms: u32,
     pub whisper: WhisperRunOptions,
 }
 
@@ -37,6 +42,7 @@ pub fn for_variant(variant: &str) -> Option<ModelProfile> {
     UZBEK_VARIANTS.contains(&variant).then(|| ModelProfile {
         language: "uz",
         timestamps: TimestampKind::None,
+        lead_in_ms: 1000,
         whisper: WhisperRunOptions {
             temperature: Some(0.0),
             // No temperature fallback: without Kotib's beam search it samples
@@ -113,10 +119,19 @@ mod tests {
             ("plain, timestamps on", TimestampKind::Auto, plain.clone()),
             ("plain, timestamps off", TimestampKind::None, plain),
         ];
+        // Silence before each clip: the profile's lead-in, or SHIVIR_PAD_MS.
+        let pad = std::env::var("SHIVIR_PAD_MS").map_or(
+            for_variant("kotib-uzbek-stt-v1").unwrap().lead_in_ms as usize * 16,
+            |v| v.parse::<usize>().unwrap() * 16,
+        );
         let clips: Vec<(String, Vec<f32>)> = std::env::var("SHIVIR_CLIPS")
             .expect("SHIVIR_CLIPS")
             .split(',')
-            .map(|p| (p.rsplit('/').next().unwrap().to_string(), load(p)))
+            .map(|p| {
+                let mut pcm = vec![0.0; pad];
+                pcm.extend(load(p));
+                (p.rsplit('/').next().unwrap().to_string(), pcm)
+            })
             .collect();
         for model_path in std::env::var("SHIVIR_MODELS")
             .expect("SHIVIR_MODELS")
@@ -207,14 +222,14 @@ mod tests {
             for (file, reference) in &rows {
                 let mut wav = hound::WavReader::open(dir.join("dev").join(file)).unwrap();
                 assert_eq!(wav.spec().sample_rate, 16_000);
-                let pcm: Vec<f32> = match wav.spec().sample_format {
+                let mut pcm = vec![0.0f32; profile.lead_in_ms as usize * 16];
+                match wav.spec().sample_format {
                     hound::SampleFormat::Float => {
-                        wav.samples::<f32>().map(Result::unwrap).collect()
+                        pcm.extend(wav.samples::<f32>().map(Result::unwrap))
                     }
-                    hound::SampleFormat::Int => wav
-                        .samples::<i32>()
-                        .map(|s| s.unwrap() as f32 / 32768.0)
-                        .collect(),
+                    hound::SampleFormat::Int => {
+                        pcm.extend(wav.samples::<i32>().map(|s| s.unwrap() as f32 / 32768.0))
+                    }
                 };
                 let text =
                     crate::uzbek_text::clean(session.run(&pcm, &options).unwrap().text.trim());

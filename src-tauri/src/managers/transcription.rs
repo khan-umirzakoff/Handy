@@ -1161,6 +1161,16 @@ impl TranscriptionManager {
             active_model,
             setup,
         } = batch;
+        // shortcut: the lead-in goes before the whole take; a long take that is
+        // chunked gets it only on its first chunk, which is enough for the
+        // dropped-first-word case it fixes.
+        let audio = if setup.lead_in_samples > 0 {
+            let mut padded = vec![0.0; setup.lead_in_samples];
+            padded.extend(audio);
+            padded
+        } else {
+            audio
+        };
         // `mark` covers every chunk, so a cancel between two stops the rest.
         // A failed chunk fails the whole transcription.
         let (transcripts, setup) =
@@ -1259,6 +1269,8 @@ fn finish_text(outcome: RunOutcome, settings: &AppSettings) -> String {
 /// configured on the loaded model, and what post-processing needs to know.
 struct RunSetup {
     run_options: RunOptions,
+    /// Silence put before the audio (the model profile's lead-in).
+    lead_in_samples: usize,
     /// The language every run uses, and how it was chosen.
     language: LanguageDecision,
     languages: Vec<String>,
@@ -1379,6 +1391,7 @@ fn run_setup(info: &LoadedInfo, settings: &AppSettings, language: LanguageDecisi
         languages,
         applied_language_hint,
         output_was_translated,
+        lead_in_samples: profile.as_ref().map_or(0, |p| p.lead_in_ms as usize * 16),
     }
 }
 
