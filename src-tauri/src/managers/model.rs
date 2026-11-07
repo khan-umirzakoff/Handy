@@ -1400,21 +1400,25 @@ impl ModelManager {
             .is_some_and(|model| model.is_downloaded)
     }
 
-    /// A custom model's id is its file stem. When the catalog later lists that
-    /// file (Shivir's Uzbek models were dropped-in files first), the same file
-    /// is now a catalog entry: the id the selection should move to.
-    fn catalog_id_for_custom_file(
+    /// The catalog entry a stale selection's file now belongs to: a custom id
+    /// is the file stem (Shivir's Uzbek models were dropped-in files first),
+    /// and a catalog id is `{repo}/{file}` whose repo may since have moved
+    /// (their placeholder repos until the Hugging Face upload).
+    fn catalog_id_for_moved_file(
         models: &HashMap<String, ModelInfo>,
-        custom_id: &str,
+        selected_id: &str,
     ) -> Option<String> {
+        let stem = match selected_id.rsplit_once('/') {
+            Some((_, file)) => Path::new(file).file_stem()?,
+            None => std::ffi::OsStr::new(selected_id),
+        };
         // Only the catalog's own entry for the file: a foreign HF repo that
         // reuses the filename must not win by HashMap order.
         crate::catalog::CATALOG
             .iter()
             .filter(|d| {
-                d.default_file().is_some_and(|f| {
-                    Path::new(&f.filename).file_stem() == Some(std::ffi::OsStr::new(custom_id))
-                })
+                d.default_file()
+                    .is_some_and(|f| Path::new(&f.filename).file_stem() == Some(stem))
             })
             .find_map(|d| models.get(&d.id).filter(|m| m.is_downloaded))
             .map(|m| m.id.clone())
@@ -1477,12 +1481,12 @@ impl ModelManager {
                 let models = self.available_models.lock().unwrap();
                 (
                     Self::selected_model_is_available(&models, &settings.selected_model),
-                    Self::catalog_id_for_custom_file(&models, &settings.selected_model),
+                    Self::catalog_id_for_moved_file(&models, &settings.selected_model),
                 )
             };
             if let (false, Some(id)) = (is_available, promoted) {
                 info!(
-                    "Selected custom model '{}' is now the catalog model '{}'; keeping it selected",
+                    "Selected model '{}' is now the catalog model '{}'; keeping it selected",
                     settings.selected_model, id
                 );
                 settings.selected_model = id;
@@ -3289,11 +3293,19 @@ mod tests {
             (kotib_info.id.clone(), kotib_info.clone()),
         ]);
         assert_eq!(
-            ModelManager::catalog_id_for_custom_file(&promoted, "kotib-uzbek-stt-v1-Q8_0"),
+            ModelManager::catalog_id_for_moved_file(&promoted, "kotib-uzbek-stt-v1-Q8_0"),
+            Some(kotib_info.id.clone())
+        );
+        // A repo move (placeholder to the real upload) keeps it too.
+        assert_eq!(
+            ModelManager::catalog_id_for_moved_file(
+                &promoted,
+                "shivir/old-gguf/kotib-uzbek-stt-v1-Q8_0.gguf"
+            ),
             Some(kotib_info.id.clone())
         );
         assert_eq!(
-            ModelManager::catalog_id_for_custom_file(&selection_models, "model-Q8_0"),
+            ModelManager::catalog_id_for_moved_file(&selection_models, "model-Q8_0"),
             None
         );
         // Until the upload, an Uzbek entry goes with its file.
